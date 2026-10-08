@@ -1,9 +1,11 @@
 pub mod config;
 
+use std::time::Instant;
+
 use axum::{
     Json, Router,
     extract::{Request, State},
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
@@ -15,6 +17,11 @@ use tracing::{Instrument, info, info_span};
 use uuid::Uuid;
 
 use config::ServerConfig;
+
+pub const SOURCE_COMMIT: &str = match option_env!("NDS_BUILD_COMMIT") {
+    Some(value) => value,
+    None => "unknown",
+};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -64,6 +71,7 @@ struct HealthResponse {
     version: String,
     channel: String,
     standards_release: String,
+    source_commit: &'static str,
     module_count: usize,
     telemetry_enabled: bool,
     database_configured: bool,
@@ -95,8 +103,7 @@ async fn request_trace(request: Request, next: Next) -> Response {
         .headers()
         .get("traceparent")
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split('-').nth(1))
-        .filter(|value| value.len() == 32)
+        .and_then(valid_trace_id)
         .map(str::to_owned)
         .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
     let span = info_span!(
@@ -105,7 +112,41 @@ async fn request_trace(request: Request, next: Next) -> Response {
         method = %request.method(),
         path = %request.uri().path()
     );
-    next.run(request).instrument(span).await
+    let started = Instant::now();
+    let mut response = next.run(request).instrument(span).await;
+    tracing::info!(
+        event = "http.request.completed",
+        status = response.status().as_u16(),
+        duration_ms = started.elapsed().as_secs_f64() * 1000.0
+    );
+    response.headers_mut().insert(
+        "x-request-id",
+        HeaderValue::from_str(&trace_id).expect("generated trace id"),
+    );
+    response
+}
+
+fn valid_trace_id(value: &str) -> Option<&str> {
+    let mut parts = value.split('-');
+    let version = parts.next()?;
+    let trace_id = parts.next()?;
+    let parent_id = parts.next()?;
+    let flags = parts.next()?;
+    if version != "00"
+        || parts.next().is_some()
+        || trace_id.len() != 32
+        || parent_id.len() != 16
+        || flags.len() != 2
+    {
+        return None;
+    }
+    if !trace_id.bytes().all(|c| c.is_ascii_hexdigit()) || trace_id.bytes().all(|c| c == b'0') {
+        return None;
+    }
+    if !parent_id.bytes().all(|c| c.is_ascii_hexdigit()) || parent_id.bytes().all(|c| c == b'0') {
+        return None;
+    }
+    Some(trace_id)
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -116,6 +157,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         version: state.config.version,
         channel: state.config.channel,
         standards_release: state.config.standards_release,
+        source_commit: SOURCE_COMMIT,
         module_count: state.module_count,
         telemetry_enabled: state.config.telemetry_enabled,
         database_configured: state.database.is_some(),
@@ -196,6 +238,10 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response.headers()["x-request-id"],
+            "0123456789abcdef0123456789abcdef"
+        );
         let body = response.into_body().collect().await.unwrap().to_bytes();
         let value: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(value["status"], "ok");
@@ -210,5 +256,18 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[test]
+    fn rejects_invalid_trace_context() {
+        assert!(
+            valid_trace_id("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01").is_some()
+        );
+        assert!(
+            valid_trace_id("00-00000000000000000000000000000000-0123456789abcdef-01").is_none()
+        );
+        assert!(
+            valid_trace_id("ff-0123456789abcdef0123456789abcdef-0123456789abcdef-01").is_none()
+        );
     }
 }
