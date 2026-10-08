@@ -30,7 +30,7 @@ impl ServerConfig {
             version: env::var("NDS_VERSION").unwrap_or_else(|_| "0.0.1-alpha.4".into()),
             channel: env::var("NDS_RELEASE_CHANNEL").unwrap_or_else(|_| "alpha".into()),
             standards_release: env::var("NDS_STANDARDS_RELEASE")
-                .unwrap_or_else(|_| "v0.0.1-alpha.6".into()),
+                .unwrap_or_else(|_| "v0.0.1-alpha.7".into()),
             source_url: env::var("NDS_SOURCE_URL").unwrap_or_else(|_| {
                 "https://github.com/NDDev-OpenNetwork/nddev-device-sync-server".into()
             }),
