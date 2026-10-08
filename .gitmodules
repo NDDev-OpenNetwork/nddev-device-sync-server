@@ -1,0 +1,3 @@
+[submodule "contracts/nddev-device-sync-protocol"]
+	path = contracts/nddev-device-sync-protocol
+	url = https://github.com/NDDev-OpenNetwork/nddev-device-sync-protocol.git
