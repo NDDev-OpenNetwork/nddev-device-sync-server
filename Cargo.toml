@@ -5,6 +5,7 @@ edition = "2024"
 rust-version = "1.99"
 license = "AGPL-3.0-only"
 authors = ["NDDev OpenNetwork"]
+build = "build.rs"
 
 [dependencies]
 axum = "0.8.9"
