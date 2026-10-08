@@ -1,0 +1,16 @@
+set shell := ["bash", "-euo", "pipefail", "-c"]
+
+default:
+    @just --list
+
+fmt-check:
+    cargo fmt --all -- --check
+
+test:
+    cargo test --workspace
+
+clippy:
+    cargo clippy --workspace --all-targets -- -D warnings
+
+check: fmt-check test clippy
+

@@ -1,4 +1,4 @@
-use nddev_device_sync_server::{config::ServerConfig, init_logging, router, AppState};
+use nddev_device_sync_server::{AppState, config::ServerConfig, init_logging, router};
 use tokio::net::TcpListener;
 
 #[tokio::main]
@@ -17,7 +17,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 async fn shutdown_signal() {
     let ctrl_c = async {
-        tokio::signal::ctrl_c().await.expect("install Ctrl+C handler");
+        tokio::signal::ctrl_c()
+            .await
+            .expect("install Ctrl+C handler");
     };
     #[cfg(unix)]
     let terminate = async {
@@ -34,4 +36,3 @@ async fn shutdown_signal() {
     }
     tracing::info!(event = "server.shutdown");
 }
-

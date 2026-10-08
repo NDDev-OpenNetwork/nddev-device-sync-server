@@ -1,17 +1,17 @@
 pub mod config;
 
 use axum::{
-    extract::State,
-    http::{Request, StatusCode},
+    Json, Router,
+    extract::{Request, State},
+    http::StatusCode,
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
 };
 use nddev_device_sync_application::builtin_modules;
 use serde::Serialize;
-use sqlx::{postgres::PgPoolOptions, PgPool};
-use tracing::{info, info_span, Instrument};
+use sqlx::{PgPool, postgres::PgPoolOptions};
+use tracing::{Instrument, info, info_span};
 use uuid::Uuid;
 
 use config::ServerConfig;
@@ -90,7 +90,7 @@ pub fn router(state: AppState) -> Router {
         .layer(middleware::from_fn(request_trace))
 }
 
-async fn request_trace<B>(request: Request<B>, next: Next) -> Response {
+async fn request_trace(request: Request, next: Next) -> Response {
     let trace_id = request
         .headers()
         .get("traceparent")
@@ -126,17 +126,30 @@ async fn ready(State(state): State<AppState>) -> Response {
     let Some(database) = state.database else {
         return (
             StatusCode::SERVICE_UNAVAILABLE,
-            Json(ReadyResponse { status: "degraded", database: "not_configured" }),
+            Json(ReadyResponse {
+                status: "degraded",
+                database: "not_configured",
+            }),
         )
             .into_response();
     };
-    match sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&database).await {
-        Ok(_) => Json(ReadyResponse { status: "ready", database: "ok" }).into_response(),
+    match sqlx::query_scalar::<_, i32>("SELECT 1")
+        .fetch_one(&database)
+        .await
+    {
+        Ok(_) => Json(ReadyResponse {
+            status: "ready",
+            database: "ok",
+        })
+        .into_response(),
         Err(error) => {
             tracing::error!(event = "database.readiness_failed", error = %error);
             (
                 StatusCode::SERVICE_UNAVAILABLE,
-                Json(ReadyResponse { status: "degraded", database: "error" }),
+                Json(ReadyResponse {
+                    status: "degraded",
+                    database: "error",
+                }),
             )
                 .into_response()
         }
@@ -173,7 +186,10 @@ mod tests {
             .oneshot(
                 Request::builder()
                     .uri("/v1/health")
-                    .header("traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01")
+                    .header(
+                        "traceparent",
+                        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+                    )
                     .body(Body::empty())
                     .unwrap(),
             )

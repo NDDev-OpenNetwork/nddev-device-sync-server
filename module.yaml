@@ -1,6 +1,6 @@
 id: server
 name: nddev-device-sync-server
-version: 0.0.1-alpha.1
+version: 0.0.1-alpha.4
 channel: alpha
 license: AGPL-3.0-only
 repository: NDDev-OpenNetwork/nddev-device-sync-server
@@ -9,4 +9,3 @@ core_release: v0.0.1-alpha.4
 protocol_release: v0.0.1-alpha.4
 platforms:
   - linux
-
