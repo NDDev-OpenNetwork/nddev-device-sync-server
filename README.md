@@ -32,6 +32,12 @@ just protocol-check
 just integration-postgres
 ```
 
+The PostgreSQL/SMTP acceptance also validates actual process NDJSON against the
+closed telemetry schema at the manifest's exact protocol commit, including
+formats and the 16 KiB event limit. Its canonical Python validator runs in a
+temporary virtual environment with hash-locked dependencies; Python 3 with
+`venv` and pip support is required. Event values are neither saved nor printed.
+
 Set `DATABASE_URL_FILE` (or `DATABASE_URL`) to enable PostgreSQL readiness.
 Run the explicit `migrate` command with `NDS_MIGRATION_DATABASE_URL_FILE` first;
 runtime startup does not execute DDL. Without a runtime database URL the process

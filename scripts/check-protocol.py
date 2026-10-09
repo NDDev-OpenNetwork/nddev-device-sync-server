@@ -1,31 +1,10 @@
 #!/usr/bin/env python3
 """Regenerate the consumed DTO from its immutable canonical source; no Git clone."""
-import os
 from pathlib import Path
-import re
 import subprocess
 import tempfile
-import urllib.request
-
-ROOT = Path(__file__).resolve().parent.parent
-REPOSITORY = "NDDev-OpenNetwork/nddev-device-sync-protocol"
-matches = re.findall(r"^protocol_commit: ([a-f0-9]{40})$", (ROOT / "module.yaml").read_text(), re.MULTILINE)
-assert len(matches) == 1, "module manifest must pin one full protocol commit"
-COMMIT = matches[0]
+from protocol_source import ROOT, source
 FILES = ["package.json", "package-lock.json", "scripts/generate-dtos.mjs", "contracts/v2/control-plane.schema.json"]
-
-
-def source(name):
-    local = ROOT.parent / "nddev-device-sync-protocol"
-    if local.is_dir():
-        result = subprocess.run(["git", "-C", str(local), "show", f"{COMMIT}:{name}"], capture_output=True, env=os.environ | {"GIT_OPTIONAL_LOCKS": "0"}, timeout=10)
-        if result.returncode == 0:
-            return result.stdout
-    url = f"https://raw.githubusercontent.com/{REPOSITORY}/{COMMIT}/{name}"
-    with urllib.request.urlopen(url, timeout=20) as response:
-        data = response.read(1024 * 1024 + 1)
-    assert len(data) <= 1024 * 1024, "protocol source exceeded its bound"
-    return data
 
 
 with tempfile.TemporaryDirectory(prefix="nds-protocol-check-") as directory:

@@ -14,6 +14,7 @@ import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from identity_acceptance import check_identity
+from telemetry_acceptance import TelemetryValidator
 
 arguments = argparse.ArgumentParser(description="Real isolated PostgreSQL/SMTP acceptance or a bounded client fixture")
 arguments.add_argument("--fixture-receipt", type=Path)
@@ -65,6 +66,7 @@ def wait_ready(port, wanted):
 try:
     with tempfile.TemporaryDirectory(prefix="nds-db-check-") as directory:
         directory = Path(directory)
+        validate_events = TelemetryValidator(directory)
         passwords = {kind: secrets.token_hex(24) for kind in ["admin", "migrator", "runtime"]}
         mounts = []
         for kind, password in passwords.items():
@@ -165,13 +167,11 @@ try:
             assert password not in logs
         assert str(directory) not in logs
         events = [json.loads(line) for line in logs.splitlines() if line.strip()]
-        for event in events:
-            for field in ["timestamp", "severity", "service.name", "service.version", "deployment.environment", "release.channel", "release.version", "source.repository", "source.commit", "module", "event.name"]:
-                assert isinstance(event[field], str), f"missing envelope field {field}"
+        validate_events(logs)
         for event_name in ["database.migration.started", "database.migration.completed", "process.failed", "admission.saturated", "admission.recovered"]:
             assert any(event["event.name"] == event_name for event in events)
         print("PostgreSQL acceptance passed: migrations replay safely; restricted runtime performs no DDL; real database contention proves bounded request admission and recovery; process/migration envelopes and secrets are verified.")
-        check_identity(BINARY, directory, env, sql, command, options.fixture_receipt, options.fixture_seconds)
+        check_identity(BINARY, directory, env, sql, command, validate_events, options.fixture_receipt, options.fixture_seconds)
 finally:
     if lock_holder is not None:
         lock_holder.terminate()

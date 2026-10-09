@@ -16,7 +16,7 @@ import uuid
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
 
 
-def check_identity(binary, directory, env, sql, command, fixture_receipt=None, fixture_seconds=1200):
+def check_identity(binary, directory, env, sql, command, validate_events, fixture_receipt=None, fixture_seconds=1200):
     mailbox = "nds-mail-check-" + uuid.uuid4().hex[:12]
     server = None
     created = False
@@ -147,6 +147,9 @@ def check_identity(binary, directory, env, sql, command, fixture_receipt=None, f
             finally:
                 state["status"] = "stopped"
                 receipt.write_text(json.dumps(state))
+                logs = stop(server)
+                server = None
+                validate_events(logs)
             return
         denied_status, denied_receipt = request("/v2/auth/email/challenges", {"email": unknown})
         status, receipt = request("/v2/auth/email/challenges", {"email": owner.upper()}, headers={"Accept-Language": "ru"})
@@ -247,6 +250,7 @@ def check_identity(binary, directory, env, sql, command, fixture_receipt=None, f
         for secret in sensitive:
             assert secret not in logs, "identity logs exposed sensitive fixture material"
         assert str(directory) not in logs
+        validate_events(logs)
         events = [json.loads(line) for line in logs.splitlines() if line]
         assert any(event.get("event.name") == "email.delivery.accepted" and event["mailbox_delivery"] == "unverified" for event in events)
         assert any(event.get("event.name") == "identity.session.issued" for event in events)
