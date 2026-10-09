@@ -26,3 +26,13 @@ just clippy
 Set `DATABASE_URL` to enable PostgreSQL readiness and migrations. Without it,
 the process still starts for route tests, while `/v1/ready` reports degraded.
 
+Requests have a 15-second handler deadline; pool acquisition and database
+readiness queries have a 3-second deadline. Completion logs retain the request
+trace/span context and use matched route patterns, never raw URL paths or query
+strings. Database readiness errors expose a stable error class rather than
+driver messages. The server accepts version `00` W3C trace context with lowercase
+hexadecimal identifiers and flags, replacing invalid input with a fresh trace ID.
+
+The local JSON log remains available for diagnosis. The telemetry-enabled health
+field describes operator intent; delivery through the future observability
+service and its enabled/disabled behavior remain a separate implementation step.
