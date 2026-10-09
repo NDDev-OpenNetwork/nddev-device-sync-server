@@ -27,7 +27,7 @@ async fn connect(url: &SecretString, max_connections: u32) -> Result<PgPool, Dat
     let options = PgConnectOptions::from_str(url.expose())
         .map_err(|_| DatabaseError::Connection)?
         .disable_statement_logging();
-    tokio::time::timeout(
+    let result = tokio::time::timeout(
         DATABASE_TIMEOUT,
         PgPoolOptions::new()
             .max_connections(max_connections)
@@ -36,7 +36,15 @@ async fn connect(url: &SecretString, max_connections: u32) -> Result<PgPool, Dat
     )
     .await
     .map_err(|_| DatabaseError::Connection)?
-    .map_err(|_| DatabaseError::Connection)
+    .map_err(|_| DatabaseError::Connection);
+    if result.is_ok() {
+        tracing::debug!(
+            event.name = "database.connection.opened",
+            max_connections,
+            outcome = "ok"
+        );
+    }
+    result
 }
 
 pub async fn connect_runtime(url: &SecretString) -> Result<PgPool, DatabaseError> {

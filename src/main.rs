@@ -3,17 +3,25 @@ use std::process::ExitCode;
 use nddev_device_sync_server::{
     AppState,
     config::{ServerConfig, migration_database_url},
-    database, init_logging, router, transport,
+    database,
+    logging::init_logging,
+    router, transport,
 };
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    init_logging();
+    let _logging = match init_logging() {
+        Ok(guard) => guard,
+        Err(error) => {
+            tracing::error!(event.name = "process.failed", module = "process", error.type = %error, outcome = "error");
+            return ExitCode::FAILURE;
+        }
+    };
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             // Adapter errors expose stable classes, never driver messages, paths or URLs.
-            tracing::error!(event.name = "process.failed", error.type = %error, outcome = "error");
+            tracing::error!(event.name = "process.failed", module = "process", error.type = %error, outcome = "error");
             ExitCode::FAILURE
         }
     }

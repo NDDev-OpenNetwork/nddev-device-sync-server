@@ -15,6 +15,9 @@ from a region must be measured there; direct DNS cannot guarantee routing.
 | `NDS_MIGRATION_DATABASE_URL_FILE` | Separate migration credential; read only by `migrate` |
 | `NDS_MIGRATION_DATABASE_URL` | Alternative migration secret for local development |
 | `NDS_TLS_CERT_FILE`, `NDS_TLS_KEY_FILE` | PEM certificate chain and matching private key; both required to enable HTTPS |
+| `NDS_MAX_CONNECTIONS` | Accepted connection tasks including TLS handshakes; default 256, range 1–4096 |
+| `NDS_MAX_REQUESTS` | Active handlers across all connections; default 64, range 1–1024 |
+| `NDS_ENVIRONMENT` | Non-secret deployment label for every local event; default `self-hosted` |
 
 Absent TLS configuration enables HTTP for local development. A partial or invalid
 pair fails startup; there is no fallback from failed TLS to plaintext. Production
@@ -113,3 +116,31 @@ deadline, HTTP/2 concurrent streams are capped at 64, and idle HTTP/2 peers have
 bounded keepalive checks. Handlers have the existing fifteen-second deadline.
 SIGTERM/Ctrl+C stops accepting and drains for at most twenty seconds, then closes
 remaining connections. Compose allows twenty-five seconds before forced exit.
+
+Admission has no application wait queue. At connection capacity, an accepted
+socket closes before a TLS handshake or connection task is created. At handler
+capacity, requests receive `503 server_busy`, `Retry-After: 1`, correlation and
+`no-store`; clients must use bounded backoff. Permits return on completion,
+disconnect, timeout or failed handshake. Pressure events aggregate rejection
+counts at the first rejection, powers of two and recovery; rejected HTTP
+requests still emit their normal error events. These bounds complement container
+limits. Streaming handlers must define their own body lifetime bounds before
+they are introduced.
+
+## Local logging
+
+Every process event uses one flat JSON envelope, including startup failures,
+migrations, TLS reload and shutdown. Version/channel/standards/environment
+labels permit only 1–128 ASCII letters, digits, dots, underscores and hyphens.
+Normal logging is the default. `RUST_LOG` does not enable dependency dumps.
+Local logs remain available when telemetry export is disabled; the exporter
+itself is not implemented by this foundation.
+
+For a diagnostic window, explicitly set `NDS_LOG_MODE=debug`,
+`NDS_DEBUG_SCOPE=http|transport|database`, and `NDS_DEBUG_SECONDS=1..900`.
+`NDS_DEBUG_EVENT_LIMIT` defaults to 1000, with a supported range of 1–10000.
+The process automatically returns to normal at expiry or budget exhaustion;
+enable/disable transitions include scope and reason. Debug adds only named
+events with bounded fields, never bodies, credentials or raw URLs. Both modes
+use the bounded Compose log retention. Remove all `NDS_DEBUG_*` settings when
+setting `NDS_LOG_MODE=normal`; contradictory settings fail startup safely.
