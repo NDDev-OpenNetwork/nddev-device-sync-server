@@ -29,3 +29,5 @@ jobs:
         run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt,clippy
       - name: Check formatting, tests and Clippy
         run: just check
+      - name: Verify PostgreSQL migration and runtime role separation
+        run: just integration-postgres

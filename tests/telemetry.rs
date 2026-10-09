@@ -39,6 +39,7 @@ async fn completion_logs_keep_correlation_and_exclude_request_secrets() {
     let state = AppState::from_config(ServerConfig {
         addr: "127.0.0.1:0".parse().unwrap(),
         database_url: None,
+        tls: None,
         version: "test".into(),
         channel: "alpha".into(),
         standards_release: "test".into(),
