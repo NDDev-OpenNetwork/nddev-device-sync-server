@@ -2,6 +2,10 @@ use std::{env, fmt, fs::File, io::Read, net::SocketAddr, path::PathBuf};
 
 use thiserror::Error;
 
+pub const DEFAULT_VERSION: &str = "0.0.1-alpha.8";
+pub const DEFAULT_CHANNEL: &str = "alpha";
+pub const DEFAULT_STANDARDS_RELEASE: &str = "v0.0.1-alpha.7";
+
 /// A secret is deliberately absent from Debug, including nested config values.
 #[derive(Clone)]
 pub struct SecretString(String);
@@ -40,6 +44,8 @@ pub struct ServerConfig {
     pub standards_release: String,
     pub source_url: String,
     pub telemetry_enabled: bool,
+    pub max_connections: usize,
+    pub max_requests: usize,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -56,6 +62,8 @@ pub enum ConfigError {
     SecretValue,
     #[error("NDS_MIGRATION_DATABASE_URL or its _FILE variant is required")]
     MigrationDatabaseMissing,
+    #[error("admission limit is outside its supported range")]
+    AdmissionLimit,
 }
 
 impl ServerConfig {
@@ -80,17 +88,34 @@ impl ServerConfig {
             addr,
             database_url: read_secret(get("DATABASE_URL"), get("DATABASE_URL_FILE"))?,
             tls,
-            version: get("NDS_VERSION").unwrap_or_else(|| "0.0.1-alpha.8".into()),
-            channel: get("NDS_RELEASE_CHANNEL").unwrap_or_else(|| "alpha".into()),
+            version: get("NDS_VERSION").unwrap_or_else(|| DEFAULT_VERSION.into()),
+            channel: get("NDS_RELEASE_CHANNEL").unwrap_or_else(|| DEFAULT_CHANNEL.into()),
             standards_release: get("NDS_STANDARDS_RELEASE")
-                .unwrap_or_else(|| "v0.0.1-alpha.7".into()),
+                .unwrap_or_else(|| DEFAULT_STANDARDS_RELEASE.into()),
             source_url: get("NDS_SOURCE_URL").unwrap_or_else(|| {
                 "https://github.com/NDDev-OpenNetwork/nddev-device-sync-server".into()
             }),
             telemetry_enabled: get("NDS_TELEMETRY_ENABLED")
                 .map(|value| !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off"))
                 .unwrap_or(true),
+            max_connections: admission_limit(get("NDS_MAX_CONNECTIONS"), 256, 4096)?,
+            max_requests: admission_limit(get("NDS_MAX_REQUESTS"), 64, 1024)?,
         })
+    }
+}
+
+fn admission_limit(
+    value: Option<String>,
+    default: usize,
+    maximum: usize,
+) -> Result<usize, ConfigError> {
+    match value {
+        None => Ok(default),
+        Some(value) => value
+            .parse::<usize>()
+            .ok()
+            .filter(|value| (1..=maximum).contains(value))
+            .ok_or(ConfigError::AdmissionLimit),
     }
 }
 
@@ -197,5 +222,23 @@ mod tests {
             .unwrap();
         std::fs::remove_file(path).unwrap();
         assert_eq!(secret.expose(), "test-value");
+    }
+
+    #[test]
+    fn admission_limits_reject_zero_overflow_and_excessive_values() {
+        for (key, maximum) in [("NDS_MAX_CONNECTIONS", 4096), ("NDS_MAX_REQUESTS", 1024)] {
+            for value in [
+                "0".into(),
+                "-1".into(),
+                "9999999999999999999999999".into(),
+                (maximum + 1).to_string(),
+            ] {
+                assert_eq!(
+                    ServerConfig::from_lookup(|name| (name == key).then(|| value.clone()))
+                        .unwrap_err(),
+                    ConfigError::AdmissionLimit
+                );
+            }
+        }
     }
 }

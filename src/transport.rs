@@ -54,6 +54,10 @@ async fn read_pem(path: &Path, max_bytes: u64) -> Result<Vec<u8>, TransportError
 }
 
 pub async fn load_tls(files: &TlsFiles) -> Result<RustlsConfig, TransportError> {
+    tracing::debug!(
+        event.name = "tls.configuration.loading",
+        outcome = "started"
+    );
     // Exactly one reviewed crypto provider; SQLx uses the same rustls/ring stack.
     let _ = rustls::crypto::ring::default_provider().install_default();
     tokio::time::timeout(TLS_RELOAD_TIMEOUT, async {
@@ -97,6 +101,7 @@ pub async fn serve_listener(
     app: Router,
     tls: Option<RustlsConfig>,
     handle: Handle<SocketAddr>,
+    max_connections: usize,
 ) -> Result<(), TransportError> {
     listener
         .set_nonblocking(true)
@@ -105,14 +110,15 @@ pub async fn serve_listener(
         .map_err(|_| TransportError::Listener)?
         .handle(handle);
     configure_http(&mut server);
+    let connections = crate::admission::Connections::new(app, max_connections);
     match tls {
         Some(tls) => {
             server
                 .acceptor(RustlsAcceptor::new(tls).handshake_timeout(TLS_HANDSHAKE_TIMEOUT))
-                .serve(app.into_make_service())
+                .serve(connections)
                 .await
         }
-        None => server.serve(app.into_make_service()).await,
+        None => server.serve(connections).await,
     }
     .map_err(|_| TransportError::Listener)
 }
@@ -163,7 +169,13 @@ pub async fn serve(config: &ServerConfig, app: Router) -> Result<(), TransportEr
         Ok::<(), TransportError>(())
     };
     tracing::info!(event.name = "server.started", address = %address, transport = if tls.is_some() { "https" } else { "http" }, outcome = "ok");
-    let server = serve_listener(listener, app, tls.clone(), handle.clone());
+    let server = serve_listener(
+        listener,
+        app,
+        tls.clone(),
+        handle.clone(),
+        config.max_connections,
+    );
     tokio::pin!(server);
     tokio::select! {
         result = &mut server => result,

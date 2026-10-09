@@ -9,6 +9,7 @@ cargo-audit. All licenses below are compatible with this AGPL-3.0-only server.
 | axum-server 0.8 | Maintained rustls acceptor, HTTP protocol driver and bounded connection drain | MIT | Axum provides equivalent TLS lifecycle support |
 | rustls 0.23 with ring | Explicit shared TLS crypto provider; HTTPS and SQLx use the same stack | Apache-2.0 OR ISC OR MIT | Transport standard replaces rustls |
 | hyper-util 0.1 | Tokio timer for HTTP header and HTTP/2 keepalive deadlines; already transitive | MIT | axum-server exposes these timers directly |
+| tower 0.5 | Existing Service trait for admission before connection task creation; already locked | MIT | axum-server provides equivalent bounded admission |
 | rcgen 0.14 (tests) | Ephemeral test certificates; no private-key fixtures in Git | MIT OR Apache-2.0 | TLS integration tests move to another reviewed fixture generator |
 | tokio-rustls 0.26 (tests) | Verify real encrypted handshakes and presented certificate changes | MIT OR Apache-2.0 | Equivalent TLS client is already present for another test need |
 
