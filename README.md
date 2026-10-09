@@ -4,11 +4,12 @@ Public AGPL-3.0-only Rust control-plane server for `nddev-device-sync`.
 
 The first vertical slice provides:
 
-- structured JSON startup/request logs;
+- one structured JSON envelope for process, migration and request events;
 - request correlation through `traceparent` or generated trace IDs;
 - `/v1/health`, `/v1/ready` and `/source` endpoints;
 - PostgreSQL readiness and an explicit migration command with a separate identity;
 - direct Rust/rustls HTTPS, bounded connection drain and safe certificate reload;
+- finite connection/handler admission and scoped, expiring debug diagnostics;
 - pinned consumption of the public core and protocol releases;
 - a module count exposed from the compiled core registry.
 

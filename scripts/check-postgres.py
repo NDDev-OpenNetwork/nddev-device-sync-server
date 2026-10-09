@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 ROOT = Path(__file__).resolve().parent.parent
 IMAGE = "postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c"
@@ -18,6 +19,7 @@ BINARY = ROOT / "target/debug/nddev-device-sync-server"
 name = "nds-db-check-" + uuid.uuid4().hex[:12]
 created = False
 server = None
+lock_holder = None
 
 
 def command(*args, **kwargs):
@@ -84,6 +86,10 @@ try:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         env["NDS_SERVER_ADDR"] = f"127.0.0.1:{port}"
+        env["NDS_MAX_REQUESTS"] = "1"
+        env["NDS_LOG_MODE"] = "normal"
+        for key in ["NDS_DEBUG_SCOPE", "NDS_DEBUG_SECONDS", "NDS_DEBUG_EVENT_LIMIT"]:
+            env.pop(key, None)
         server = subprocess.Popen([BINARY, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         wait_ready(port, 503)
         assert sql("SELECT count(*) FROM information_schema.tables WHERE table_schema='public'").stdout.strip() == "0", "runtime created schema before migrations"
@@ -93,12 +99,45 @@ try:
         server = None
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
         for _ in range(2):
-            logs += command(str(BINARY), "migrate", env=migration_env)
+            logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
         assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "1"
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         server = subprocess.Popen([BINARY, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         wait_ready(port, 200)
+        # Actual PostgreSQL lock contention holds the only request permit. The
+        # second HTTP request must reject immediately, and recover after release.
+        lock_holder = subprocess.Popen(["docker", "exec", name, "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "nds", "-c", "BEGIN; LOCK TABLE nddev_schema_meta IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(2); COMMIT;"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        for _ in range(100):
+            if sql("SELECT count(*) FROM pg_locks WHERE relation='nddev_schema_meta'::regclass AND mode='AccessExclusiveLock' AND granted").stdout.strip() == "1":
+                break
+            time.sleep(0.01)
+        else:
+            raise AssertionError("lock holder did not acquire table lock")
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            waiting = executor.submit(urllib.request.urlopen, f"http://127.0.0.1:{port}/v1/ready", timeout=5)
+            for _ in range(100):
+                if sql("SELECT count(*) FROM pg_stat_activity WHERE usename='nds_runtime' AND wait_event_type='Lock'").stdout.strip() == "1":
+                    break
+                time.sleep(0.01)
+            else:
+                raise AssertionError("readiness did not wait on real database contention")
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/health", timeout=1)
+                raise AssertionError("request admission did not reject saturation")
+            except urllib.error.HTTPError as error:
+                assert error.code == 503
+                assert error.headers["Cache-Control"] == "no-store"
+                assert error.headers["Retry-After"] == "1"
+                assert len(error.headers["X-Request-Id"]) == 32
+                assert json.load(error)["error"] == "server_busy"
+            with waiting.result(timeout=5) as response:
+                assert response.status == 200
+        lock_holder.communicate(timeout=5)
+        assert lock_holder.returncode == 0
+        lock_holder = None
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/health", timeout=1) as response:
+            assert response.status == 200
         server.terminate()
         logs += server.communicate(timeout=25)[0]
         assert server.returncode == 0
@@ -110,8 +149,17 @@ try:
         for password in passwords.values():
             assert password not in logs
         assert str(directory) not in logs
-        print("PostgreSQL acceptance passed: empty schema is not ready; runtime performs no DDL; migrations replay safely; restricted runtime is ready; admin role rejected; logs redacted.")
+        events = [json.loads(line) for line in logs.splitlines() if line.strip()]
+        for event in events:
+            for field in ["timestamp", "severity", "service.name", "service.version", "deployment.environment", "release.channel", "release.version", "source.repository", "source.commit", "module", "event.name"]:
+                assert isinstance(event[field], str), f"missing envelope field {field}"
+        for event_name in ["database.migration.started", "database.migration.completed", "process.failed", "admission.saturated", "admission.recovered"]:
+            assert any(event["event.name"] == event_name for event in events)
+        print("PostgreSQL acceptance passed: migrations replay safely; restricted runtime performs no DDL; real database contention proves bounded request admission and recovery; process/migration envelopes and secrets are verified.")
 finally:
+    if lock_holder is not None:
+        lock_holder.terminate()
+        lock_holder.communicate(timeout=5)
     if server is not None:
         server.terminate()
         server.communicate(timeout=25)

@@ -94,6 +94,8 @@ async fn https_preserves_headers_and_only_reloads_valid_pairs() {
         standards_release: "test".into(),
         source_url: "https://example.invalid/source".into(),
         telemetry_enabled: true,
+        max_connections: 256,
+        max_requests: 64,
     })
     .await
     .unwrap();
@@ -104,6 +106,7 @@ async fn https_preserves_headers_and_only_reloads_valid_pairs() {
         router(state),
         Some(tls.clone()),
         handle.clone(),
+        256,
     ));
     let addr = tokio::time::timeout(Duration::from_secs(2), handle.listening())
         .await
@@ -155,7 +158,7 @@ async fn graceful_shutdown_closes_a_never_ending_request_by_its_deadline() {
     );
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let handle = Handle::new();
-    let server = tokio::spawn(serve_listener(listener, app, None, handle.clone()));
+    let server = tokio::spawn(serve_listener(listener, app, None, handle.clone(), 256));
     let mut socket = TcpStream::connect(
         tokio::time::timeout(Duration::from_secs(2), handle.listening())
             .await
@@ -199,4 +202,72 @@ async fn oversized_or_missing_tls_material_fails_closed_without_exposing_paths()
         error.to_string(),
         "TLS certificate or key is unreadable or invalid"
     );
+}
+
+#[tokio::test]
+async fn saturated_connections_close_before_tls_and_capacity_returns_on_disconnect() {
+    let cert = generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let files = CertificateFiles::new(&cert);
+    let tls = load_tls(&files.files).await.unwrap();
+    let client = connector(&[cert.cert.der().clone()]);
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let handle = Handle::new();
+    let app = Router::new().route("/v1/health", get(|| async { "ok" }));
+    let server = tokio::spawn(serve_listener(listener, app, Some(tls), handle.clone(), 1));
+    let addr = tokio::time::timeout(Duration::from_secs(2), handle.listening())
+        .await
+        .unwrap()
+        .unwrap();
+    let first = client
+        .connect(
+            ServerName::try_from("localhost").unwrap(),
+            TcpStream::connect(addr).await.unwrap(),
+        )
+        .await
+        .unwrap();
+    let rejected = client.connect(
+        ServerName::try_from("localhost").unwrap(),
+        TcpStream::connect(addr).await.unwrap(),
+    );
+    assert!(
+        tokio::time::timeout(Duration::from_secs(2), rejected)
+            .await
+            .unwrap()
+            .is_err(),
+        "extra connection reached TLS despite admission limit"
+    );
+    drop(first);
+    // Closing TLS is asynchronous at the server; retry within a fixed deadline.
+    let mut recovered = tokio::time::timeout(Duration::from_secs(2), async {
+        loop {
+            if let Ok(tls) = client
+                .connect(
+                    ServerName::try_from("localhost").unwrap(),
+                    TcpStream::connect(addr).await.unwrap(),
+                )
+                .await
+            {
+                break tls;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .unwrap();
+    recovered
+        .write_all(b"GET /v1/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .await
+        .unwrap();
+    let mut response = Vec::new();
+    tokio::time::timeout(Duration::from_secs(2), recovered.read_to_end(&mut response))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(response.starts_with(b"HTTP/1.1 200"));
+    handle.graceful_shutdown(Some(Duration::from_secs(1)));
+    tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
 }

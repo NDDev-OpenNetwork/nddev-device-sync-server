@@ -1,8 +1,13 @@
+mod admission;
 pub mod config;
 pub mod database;
+pub mod logging;
 pub mod transport;
 
-use std::time::{Duration, Instant};
+use std::{
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use axum::{
     Json, Router,
@@ -16,7 +21,8 @@ use database::DATABASE_TIMEOUT;
 use nddev_device_sync_application::builtin_modules;
 use serde::Serialize;
 use sqlx::PgPool;
-use tracing::{Instrument, info, info_span};
+use tokio::sync::Semaphore;
+use tracing::{Instrument, info_span};
 use uuid::Uuid;
 
 use config::ServerConfig;
@@ -33,6 +39,8 @@ pub struct AppState {
     pub config: ServerConfig,
     pub database: Option<PgPool>,
     pub module_count: usize,
+    requests: Arc<Semaphore>,
+    pressure: Arc<admission::Pressure>,
 }
 
 impl AppState {
@@ -43,6 +51,8 @@ impl AppState {
             None
         };
         Ok(Self {
+            requests: Arc::new(Semaphore::new(config.max_requests)),
+            pressure: Arc::default(),
             config,
             database,
             module_count: builtin_modules().len(),
@@ -61,9 +71,13 @@ impl AppState {
                 standards_release: "test".into(),
                 source_url: "https://nddev.ai".into(),
                 telemetry_enabled: true,
+                max_connections: 256,
+                max_requests: 64,
             },
             database: None,
             module_count: builtin_modules().len(),
+            requests: Arc::new(Semaphore::new(64)),
+            pressure: Arc::default(),
         }
     }
 }
@@ -116,27 +130,40 @@ async fn request_trace(State(state): State<AppState>, request: Request, next: Ne
         .get::<MatchedPath>()
         .map(MatchedPath::as_str)
         .unwrap_or("unmatched");
+    let method = match request.method().as_str() {
+        method @ ("GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "OPTIONS" | "PATCH" | "CONNECT"
+        | "TRACE") => method,
+        _ => "OTHER",
+    };
     let span = info_span!(
         "http.request",
         trace_id = %trace_id,
         span_id = %span_id,
-        service.name = "nddev-device-sync-server",
-        service.version = %state.config.version,
-        release.channel = %state.config.channel,
-        source.repository = "NDDev-OpenNetwork/nddev-device-sync-server",
-        source.commit = SOURCE_COMMIT,
-        method = %request.method(),
+        method,
         route
     );
     let started = Instant::now();
     let mut response = async {
-        let response = match tokio::time::timeout(REQUEST_TIMEOUT, next.run(request)).await {
-            Ok(response) => response,
-            Err(_) => (
-                StatusCode::GATEWAY_TIMEOUT,
-                Json(serde_json::json!({"error": "request_timeout"})),
+        let permit = state.requests.try_acquire();
+        let response = if let Ok(_permit) = permit {
+            state.pressure.recover("requests");
+            tracing::debug!(event.name = "http.request.started", outcome = "started");
+            match tokio::time::timeout(REQUEST_TIMEOUT, next.run(request)).await {
+                Ok(response) => response,
+                Err(_) => (
+                    StatusCode::GATEWAY_TIMEOUT,
+                    Json(serde_json::json!({"error": "request_timeout"})),
+                )
+                    .into_response(),
+            }
+        } else {
+            state.pressure.reject("requests");
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                [("retry-after", "1")],
+                Json(serde_json::json!({"error": "server_busy"})),
             )
-                .into_response(),
+                .into_response()
         };
         if response.status().is_server_error() {
             tracing::error!(
@@ -201,7 +228,7 @@ fn valid_trace_id(value: &str) -> Option<&str> {
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
-    info!(service = "nddev-device-sync-server", event = "health.read");
+    tracing::debug!(event.name = "health.read", outcome = "ok");
     Json(HealthResponse {
         status: "ok",
         service: "nddev-device-sync-server",
@@ -260,16 +287,6 @@ async fn source(State(state): State<AppState>) -> Json<SourceResponse> {
         source_url: state.config.source_url,
         license: "AGPL-3.0-only",
     })
-}
-
-pub fn init_logging() {
-    let _ = tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "nddev_device_sync_server=info".into()),
-        )
-        .try_init();
 }
 
 #[cfg(test)]
