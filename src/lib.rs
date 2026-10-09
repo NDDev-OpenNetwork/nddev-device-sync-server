@@ -1,4 +1,6 @@
 pub mod config;
+pub mod database;
+pub mod transport;
 
 use std::time::{Duration, Instant};
 
@@ -10,16 +12,16 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
+use database::DATABASE_TIMEOUT;
 use nddev_device_sync_application::builtin_modules;
 use serde::Serialize;
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use sqlx::PgPool;
 use tracing::{Instrument, info, info_span};
 use uuid::Uuid;
 
 use config::ServerConfig;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
-const DATABASE_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub const SOURCE_COMMIT: &str = match option_env!("NDS_BUILD_COMMIT") {
     Some(value) => value,
@@ -34,15 +36,9 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub async fn from_config(config: ServerConfig) -> Result<Self, sqlx::Error> {
+    pub async fn from_config(config: ServerConfig) -> Result<Self, database::DatabaseError> {
         let database = if let Some(url) = &config.database_url {
-            let pool = PgPoolOptions::new()
-                .max_connections(8)
-                .acquire_timeout(DATABASE_TIMEOUT)
-                .connect(url)
-                .await?;
-            sqlx::migrate!().run(&pool).await?;
-            Some(pool)
+            Some(database::connect_runtime(url).await?)
         } else {
             None
         };
@@ -59,6 +55,7 @@ impl AppState {
             config: ServerConfig {
                 addr: "127.0.0.1:0".parse().expect("valid test address"),
                 database_url: None,
+                tls: None,
                 version: "test".into(),
                 channel: "alpha".into(),
                 standards_release: "test".into(),
@@ -231,7 +228,7 @@ async fn ready(State(state): State<AppState>) -> Response {
     };
     match tokio::time::timeout(
         DATABASE_TIMEOUT,
-        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&database),
+        sqlx::query_scalar::<_, i32>("SELECT 1 FROM nddev_schema_meta WHERE key = 'product' AND value = 'nddev-device-sync-server'").fetch_one(&database),
     )
     .await
     {

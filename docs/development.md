@@ -26,3 +26,10 @@ The server currently consumes core and protocol alpha.5. Core runtime sources
 and wire schemas are unchanged through alpha.7; these pins remain explicit
 until the next coordinated contract change. OAuth, enrollment and sync-log
 acceptance are separate from the existing health/readiness route checks.
+
+Run `just integration-postgres` for the explicit migration boundary. It creates
+only a new loopback-only PostgreSQL container with tmpfs storage and generated
+test secrets, validates migrations from zero and repeated runs, proves the
+runtime cannot create tables or modify the SQLx ledger, rejects an administrative
+runtime identity, and stops that test container. No operator database or named
+volume is inspected or modified. CI runs this after `just check`.

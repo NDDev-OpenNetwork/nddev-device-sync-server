@@ -14,3 +14,8 @@ clippy:
 
 check: fmt-check test clippy
 
+
+# Uses a new disposable PostgreSQL container, tmpfs data and synthetic secrets.
+integration-postgres:
+    cargo build --locked
+    python3 scripts/check-postgres.py
