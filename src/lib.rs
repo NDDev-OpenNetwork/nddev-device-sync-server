@@ -169,6 +169,10 @@ async fn request_trace(State(state): State<AppState>, request: Request, next: Ne
         "x-request-id",
         HeaderValue::from_str(&trace_id).expect("generated trace id"),
     );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        HeaderValue::from_static("no-store"),
+    );
     response
 }
 
@@ -354,6 +358,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(response.headers()["cache-control"], "no-store");
         assert_eq!(
             response.headers()["x-request-id"].to_str().unwrap().len(),
             32
@@ -384,5 +389,22 @@ mod tests {
             response.headers()["x-request-id"],
             "0123456789abcdef0123456789abcdef"
         );
+    }
+
+    #[tokio::test]
+    async fn success_and_error_responses_disable_http_storage() {
+        for (path, status) in [
+            ("/v1/health", StatusCode::OK),
+            ("/source", StatusCode::OK),
+            ("/v1/ready", StatusCode::SERVICE_UNAVAILABLE),
+            ("/missing", StatusCode::NOT_FOUND),
+        ] {
+            let response = router(AppState::test())
+                .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+            assert_eq!(response.headers()["cache-control"], "no-store", "{path}");
+        }
     }
 }
