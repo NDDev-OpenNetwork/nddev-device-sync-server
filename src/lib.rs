@@ -1,10 +1,10 @@
 pub mod config;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use axum::{
     Json, Router,
-    extract::{Request, State},
+    extract::{MatchedPath, Request, State},
     http::{HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -17,6 +17,9 @@ use tracing::{Instrument, info, info_span};
 use uuid::Uuid;
 
 use config::ServerConfig;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(15);
+const DATABASE_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub const SOURCE_COMMIT: &str = match option_env!("NDS_BUILD_COMMIT") {
     Some(value) => value,
@@ -33,7 +36,11 @@ pub struct AppState {
 impl AppState {
     pub async fn from_config(config: ServerConfig) -> Result<Self, sqlx::Error> {
         let database = if let Some(url) = &config.database_url {
-            let pool = PgPoolOptions::new().max_connections(8).connect(url).await?;
+            let pool = PgPoolOptions::new()
+                .max_connections(8)
+                .acquire_timeout(DATABASE_TIMEOUT)
+                .connect(url)
+                .await?;
             sqlx::migrate!().run(&pool).await?;
             Some(pool)
         } else {
@@ -94,11 +101,11 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
         .route("/source", get(source))
-        .with_state(state)
-        .layer(middleware::from_fn(request_trace))
+        .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(state, request_trace))
 }
 
-async fn request_trace(request: Request, next: Next) -> Response {
+async fn request_trace(State(state): State<AppState>, request: Request, next: Next) -> Response {
     let trace_id = request
         .headers()
         .get("traceparent")
@@ -106,19 +113,58 @@ async fn request_trace(request: Request, next: Next) -> Response {
         .and_then(valid_trace_id)
         .map(str::to_owned)
         .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
+    let span_id = Uuid::new_v4().simple().to_string()[..16].to_owned();
+    let route = request
+        .extensions()
+        .get::<MatchedPath>()
+        .map(MatchedPath::as_str)
+        .unwrap_or("unmatched");
     let span = info_span!(
         "http.request",
         trace_id = %trace_id,
+        span_id = %span_id,
+        service.name = "nddev-device-sync-server",
+        service.version = %state.config.version,
+        release.channel = %state.config.channel,
+        source.repository = "NDDev-OpenNetwork/nddev-device-sync-server",
+        source.commit = SOURCE_COMMIT,
         method = %request.method(),
-        path = %request.uri().path()
+        route
     );
     let started = Instant::now();
-    let mut response = next.run(request).instrument(span).await;
-    tracing::info!(
-        event = "http.request.completed",
-        status = response.status().as_u16(),
-        duration_ms = started.elapsed().as_secs_f64() * 1000.0
-    );
+    let mut response = async {
+        let response = match tokio::time::timeout(REQUEST_TIMEOUT, next.run(request)).await {
+            Ok(response) => response,
+            Err(_) => (
+                StatusCode::GATEWAY_TIMEOUT,
+                Json(serde_json::json!({"error": "request_timeout"})),
+            )
+                .into_response(),
+        };
+        if response.status().is_server_error() {
+            tracing::error!(
+                event.name = "http.request.completed",
+                error.type = "http_server_error",
+                status = response.status().as_u16(),
+                duration_ms = started.elapsed().as_secs_f64() * 1000.0,
+                outcome = "error"
+            );
+        } else {
+            tracing::info!(
+                event.name = "http.request.completed",
+                status = response.status().as_u16(),
+                duration_ms = started.elapsed().as_secs_f64() * 1000.0,
+                outcome = if response.status().is_client_error() {
+                    "rejected"
+                } else {
+                    "ok"
+                }
+            );
+        }
+        response
+    }
+    .instrument(span)
+    .await;
     response.headers_mut().insert(
         "x-request-id",
         HeaderValue::from_str(&trace_id).expect("generated trace id"),
@@ -140,10 +186,14 @@ fn valid_trace_id(value: &str) -> Option<&str> {
     {
         return None;
     }
-    if !trace_id.bytes().all(|c| c.is_ascii_hexdigit()) || trace_id.bytes().all(|c| c == b'0') {
+    let lowercase_hex = |c: u8| c.is_ascii_digit() || (b'a'..=b'f').contains(&c);
+    if !flags.bytes().all(lowercase_hex) {
         return None;
     }
-    if !parent_id.bytes().all(|c| c.is_ascii_hexdigit()) || parent_id.bytes().all(|c| c == b'0') {
+    if !trace_id.bytes().all(lowercase_hex) || trace_id.bytes().all(|c| c == b'0') {
+        return None;
+    }
+    if !parent_id.bytes().all(lowercase_hex) || parent_id.bytes().all(|c| c == b'0') {
         return None;
     }
     Some(trace_id)
@@ -175,17 +225,23 @@ async fn ready(State(state): State<AppState>) -> Response {
         )
             .into_response();
     };
-    match sqlx::query_scalar::<_, i32>("SELECT 1")
-        .fetch_one(&database)
-        .await
+    match tokio::time::timeout(
+        DATABASE_TIMEOUT,
+        sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&database),
+    )
+    .await
     {
-        Ok(_) => Json(ReadyResponse {
+        Ok(Ok(_)) => Json(ReadyResponse {
             status: "ready",
             database: "ok",
         })
         .into_response(),
-        Err(error) => {
-            tracing::error!(event = "database.readiness_failed", error = %error);
+        failed => {
+            tracing::error!(
+                event.name = "database.readiness_failed",
+                error.type = if failed.is_err() { "database_timeout" } else { "database_unavailable" },
+                outcome = "error"
+            );
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ReadyResponse {
@@ -268,6 +324,65 @@ mod tests {
         );
         assert!(
             valid_trace_id("ff-0123456789abcdef0123456789abcdef-0123456789abcdef-01").is_none()
+        );
+        for invalid in [
+            "00-0123456789abcdef0123456789abcdef-0123456789abcdef-zz",
+            "00-0123456789abcdef0123456789abcdef-0123456789abcdef-FF",
+            "00-0123456789ABCDEF0123456789abcdef-0123456789abcdef-01",
+            "00-0123456789abcdef0123456789abcdef-0123456789ABCDEF-01",
+            "00-0123456789abcdef0123456789abcdef-0000000000000000-01",
+            "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01-extra",
+        ] {
+            assert!(valid_trace_id(invalid).is_none(), "accepted {invalid}");
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn slow_handler_is_cancelled_with_a_correlated_timeout() {
+        let state = AppState::test();
+        let app = Router::new()
+            .route(
+                "/slow",
+                get(|| async {
+                    tokio::time::sleep(Duration::from_secs(60)).await;
+                    StatusCode::OK
+                }),
+            )
+            .layer(middleware::from_fn_with_state(state, request_trace));
+        let response = app
+            .oneshot(Request::get("/slow").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
+        assert_eq!(
+            response.headers()["x-request-id"].to_str().unwrap().len(),
+            32
+        );
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["error"],
+            "request_timeout"
+        );
+    }
+
+    #[tokio::test]
+    async fn invalid_flags_do_not_control_response_correlation() {
+        let response = router(AppState::test())
+            .oneshot(
+                Request::get("/v1/health")
+                    .header(
+                        "traceparent",
+                        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-zz",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_ne!(
+            response.headers()["x-request-id"],
+            "0123456789abcdef0123456789abcdef"
         );
     }
 }
