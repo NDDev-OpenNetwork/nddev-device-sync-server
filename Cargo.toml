@@ -10,13 +10,19 @@ build = "build.rs"
 [dependencies]
 axum = "0.8.9"
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
+base64 = "0.22"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
-nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", tag = "v0.0.1-alpha.5" }
+nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "9bc379e0a0d921b8478fb2e736d97280ce3dc0aa" }
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls"] }
+reqwest = { version = "0.13.3", default-features = false, features = ["rustls-no-provider", "form", "json"] }
+ring = "0.17"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.9", default-features = false, features = ["json", "macros", "migrate", "postgres", "runtime-tokio", "tls-rustls"] }
 thiserror = "2.0"
+subtle = "2.6"
+time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1.53", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5", default-features = false }
 tracing = "0.1"

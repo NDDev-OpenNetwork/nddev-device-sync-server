@@ -33,9 +33,10 @@ schema record as well as connectivity; an unmigrated database is not ready.
 
 Run `nddev-device-sync-server migrate` explicitly before `serve`. Migrations have
 a sixty-second deadline and a separate credential. The Compose initializer
-creates `nds_migrator` (schema owner) and `nds_runtime` (read access for the current
-health slice). Runtime cannot modify the SQLx ledger or create schema objects.
-Future mutation migrations must grant only the required table/sequence writes.
+creates `nds_migrator` (schema owner) and `nds_runtime`. The baseline grants
+metadata reads; the identity migration grants bootstrap-owner insertion,
+challenge/rate-state mutations and session insertion/deletion. Runtime cannot
+reassign the owner, modify the SQLx ledger or create schema objects.
 Administrative access stays with PostgreSQL; observability credentials are not
 provisioned until the observability service exists.
 
@@ -82,10 +83,74 @@ mount that CA and configure curl's trust bundle. For a development build, supply
 a local `NDS_IMAGE` tag, a full `NDS_SOURCE_COMMIT`, and run `docker compose build`.
 Release deployments must instead consume the reviewed built image by digest.
 
-The baseline is not an OAuth/login application yet. It exposes `/v1/health`,
-`/v1/ready`, and `/source`, with request IDs and `Cache-Control: no-store` on both
-successful and error responses. Certificate private keys and database URLs never
-enter HTTP responses. The observability pipeline remains a separate slice.
+The server exposes `/v1/health`, `/v1/ready`, `/source` and the implemented v2
+identity routes, with request IDs and `Cache-Control: no-store`. Identity is
+unavailable until configured privately. `/v1/ready` requires schema version 2;
+use the explicit migrator before starting the updated runtime. The observability
+pipeline remains a separate slice.
+
+## Owner identity
+
+Set `NDS_AUTH_CONFIG_FILE` to an operator-owned JSON file, at most 16 KiB.
+For Compose, use `compose.yaml` plus `compose.identity.yaml` and set
+`NDS_AUTH_DIRECTORY`; the overlay mounts this directory read-only at
+`/run/nds-auth`. Paths inside the JSON refer to readable files in that mount.
+Protect it from unrelated users and never put the file or secrets in Git.
+
+| JSON field | Contract |
+| --- | --- |
+| `owner_email` | Explicit permitted ASCII mailbox; trim and lowercase comparison |
+| `pepper_file` | Separate file containing canonical unpadded base64url of 32 cryptographically random bytes |
+| `smtp` | Optional object: `host`, `port`, `tls`, `from`; optional paired `username` and `password_file` |
+| `smtp.tls` | `tls` for implicit TLS, `starttls` for mandatory STARTTLS, or `loopback` only for literal loopback relay addresses |
+| `github` | Optional object: stable numeric `owner_id`, `client_id`, `client_secret_file`, `callback_url` |
+| `github.callback_url` | Exact HTTPS URL ending in `/v2/auth/github/callback`, without user info, query or fragment |
+
+At least one provider must be configured. SMTP ports are configurable, including
+implicit TLS on 2465 for providers supporting it. External relays always require
+TLS certificate validation. The GitHub adapter only calls fixed github.com and
+api.github.com endpoints and never follows redirects. Its provider access token
+exists only for the bounded code exchange and identity read.
+
+Bootstrap creates one persistent internal user/tenant identity from this private
+configuration. A later different email/pepper/GitHub binding fails startup;
+runtime cannot silently reassign the owner. Configure both desired bindings
+before initial startup. Provider linking or credential rotation requires a
+separate reviewed operation. Public registration is absent.
+
+Email challenges use eight-digit codes, five-minute expiry, five attempts and
+a sixty-second resend delay. A permitted resend invalidates the previous code.
+Subject limits allow five challenges/hour and source limits ten starts/fifteen
+minutes. Source identity uses the socket IP; forwarding headers and ephemeral
+ports cannot change it. Store protected HMAC verifiers, never plaintext codes.
+Responses are generic for permitted and other valid mailboxes. SMTP uses a
+sixteen-item memory queue and an eight-second delivery deadline, with no retry
+of an uncertain delivery. Required local failures remain visible. Provider
+acceptance is not proof of mailbox delivery.
+
+GitHub flows last five minutes, are bounded to 128 and disappear on process
+restart. After stable provider ID verification, the browser shows the same
+comparison code as the initiating app. An explicit approval requires its
+one-use HttpOnly/Secure/SameSite cookie, CSRF proof and exact origin. GET callback
+alone never approves an initiating app. The app polls at most once every two
+seconds and consumes its opaque exchange capability once. An interrupted or
+failed exchange may require starting sign-in again.
+
+Both methods issue the same eight-hour owner session; at most 32 active sessions
+are retained. Session digests persist in PostgreSQL; GET `/v2/session` validates
+ownership/expiry and DELETE revokes the current session. A session does not
+recover device/vault keys. Expired challenge/session/rate state is pruned on
+identity activity within fixed table capacities. Pending SMTP work is discarded
+on shutdown; already-delivered unexpired OTP verifiers survive restart under
+the unchanged pepper.
+
+`Accept-Language: en` or `ru` on the initial request selects email and approval
+text, defaulting to English. The locale is bound to the pending flow. Anonymous
+`/v2/auth/methods` reads cached provider state only: bounded startup/background
+checks, sixty-second refresh and failure backoff capped at five minutes.
+Stale readiness becomes unavailable. GitHub readiness is not evidence of a
+successful credential/owner exchange; prove that with an actual sign-in.
+Authentication requires HTTPS unless the HTTP listener is loopback-only.
 
 ## Certificate renewal and shutdown
 
@@ -135,6 +200,12 @@ labels permit only 1–128 ASCII letters, digits, dots, underscores and hyphens.
 Normal logging is the default. `RUST_LOG` does not enable dependency dumps.
 Local logs remain available when telemetry export is disabled; the exporter
 itself is not implemented by this foundation.
+
+Each emitted record carries a per-process `producer.instance_id` and ordered
+`producer.sequence` assigned under the stdout write lock. Filtered events do not
+consume sequence numbers. The optional pair is omitted after the exact JSON
+integer limit instead of wrapping. Gaps can expose discontinuity; they do not
+alone prove an exact dropped-event count.
 
 For a diagnostic window, explicitly set `NDS_LOG_MODE=debug`,
 `NDS_DEBUG_SCOPE=http|transport|database`, and `NDS_DEBUG_SECONDS=1..900`.
