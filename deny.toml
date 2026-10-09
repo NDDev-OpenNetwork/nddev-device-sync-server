@@ -1,6 +1,7 @@
 # Reviewed licenses in the locked dependency graph; the product remains AGPL-only.
 [licenses]
 allow = [
+    "0BSD",
     "AGPL-3.0-only",
     "Apache-2.0",
     "BSD-3-Clause",

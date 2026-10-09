@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Disposable loopback-only PostgreSQL acceptance; never uses operator credentials."""
 import json
+import argparse
 import os
 from pathlib import Path
 import secrets
@@ -12,6 +13,19 @@ import urllib.error
 import urllib.request
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from identity_acceptance import check_identity
+
+arguments = argparse.ArgumentParser(description="Real isolated PostgreSQL/SMTP acceptance or a bounded client fixture")
+arguments.add_argument("--fixture-receipt", type=Path)
+arguments.add_argument("--fixture-seconds", type=int, default=1200)
+options = arguments.parse_args()
+if not 60 <= options.fixture_seconds <= 3600:
+    arguments.error("fixture lifetime must be 60..3600 seconds")
+if options.fixture_receipt is not None:
+    repository = Path(__file__).resolve().parent.parent
+    receipt = options.fixture_receipt.resolve()
+    if not options.fixture_receipt.is_absolute() or receipt.is_relative_to(repository) or receipt.exists():
+        arguments.error("fixture receipt must be a new absolute path outside the repository")
 
 ROOT = Path(__file__).resolve().parent.parent
 IMAGE = "postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c"
@@ -23,11 +37,12 @@ lock_holder = None
 
 
 def command(*args, **kwargs):
+    kwargs.setdefault("timeout", 90)
     return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs).stdout.strip()
 
 
 def sql(statement, role="postgres", check=True):
-    return subprocess.run(["docker", "exec", name, "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", role, "-d", "nds", "-c", statement], check=check, capture_output=True, text=True)
+    return subprocess.run(["docker", "exec", "-i", name, "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", role, "-d", "nds", "-f", "-"], input=statement, check=check, capture_output=True, text=True, timeout=10)
 
 
 def wait_ready(port, wanted):
@@ -80,7 +95,7 @@ try:
             path = directory / f"{kind}_url"
             path.write_text(f"postgres://{role}:{password}@127.0.0.1:{host_port}/nds\n")
             urls[kind] = str(path)
-        env = {key: value for key, value in os.environ.items() if key not in {"DATABASE_URL", "DATABASE_URL_FILE", "NDS_MIGRATION_DATABASE_URL", "NDS_MIGRATION_DATABASE_URL_FILE", "NDS_TLS_CERT_FILE", "NDS_TLS_KEY_FILE"}}
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("NDS_", "DATABASE_URL")) and key != "RUST_LOG"}
         env["DATABASE_URL_FILE"] = urls["runtime"]
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
@@ -100,7 +115,7 @@ try:
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
         for _ in range(2):
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "1"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "2"
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         server = subprocess.Popen([BINARY, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
@@ -156,6 +171,7 @@ try:
         for event_name in ["database.migration.started", "database.migration.completed", "process.failed", "admission.saturated", "admission.recovered"]:
             assert any(event["event.name"] == event_name for event in events)
         print("PostgreSQL acceptance passed: migrations replay safely; restricted runtime performs no DDL; real database contention proves bounded request admission and recovery; process/migration envelopes and secrets are verified.")
+        check_identity(BINARY, directory, env, sql, command, options.fixture_receipt, options.fixture_seconds)
 finally:
     if lock_holder is not None:
         lock_holder.terminate()

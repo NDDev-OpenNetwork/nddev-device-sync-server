@@ -1,7 +1,9 @@
 mod admission;
 pub mod config;
 pub mod database;
+pub mod identity;
 pub mod logging;
+pub mod protocol_v2;
 pub mod transport;
 
 use std::{
@@ -11,7 +13,7 @@ use std::{
 
 use axum::{
     Json, Router,
-    extract::{MatchedPath, Request, State},
+    extract::{DefaultBodyLimit, MatchedPath, Request, State},
     http::{HeaderValue, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Response},
@@ -39,6 +41,7 @@ pub struct AppState {
     pub config: ServerConfig,
     pub database: Option<PgPool>,
     pub module_count: usize,
+    pub identity: Option<Arc<identity::Service>>,
     requests: Arc<Semaphore>,
     pressure: Arc<admission::Pressure>,
 }
@@ -50,7 +53,19 @@ impl AppState {
         } else {
             None
         };
+        let identity = match &config.identity {
+            Some(identity) => Some(
+                identity::initialize(
+                    database.clone().ok_or(database::DatabaseError::Identity)?,
+                    identity,
+                )
+                .await
+                .map_err(|_| database::DatabaseError::Identity)?,
+            ),
+            None => None,
+        };
         Ok(Self {
+            identity,
             requests: Arc::new(Semaphore::new(config.max_requests)),
             pressure: Arc::default(),
             config,
@@ -73,9 +88,11 @@ impl AppState {
                 telemetry_enabled: true,
                 max_connections: 256,
                 max_requests: 64,
+                identity: None,
             },
             database: None,
             module_count: builtin_modules().len(),
+            identity: None,
             requests: Arc::new(Semaphore::new(64)),
             pressure: Arc::default(),
         }
@@ -112,6 +129,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
         .route("/source", get(source))
+        .merge(identity::http::routes())
+        .layer(DefaultBodyLimit::max(65_536))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, request_trace))
 }
@@ -255,7 +274,7 @@ async fn ready(State(state): State<AppState>) -> Response {
     };
     match tokio::time::timeout(
         DATABASE_TIMEOUT,
-        sqlx::query_scalar::<_, i32>("SELECT 1 FROM nddev_schema_meta WHERE key = 'product' AND value = 'nddev-device-sync-server'").fetch_one(&database),
+        sqlx::query_scalar::<_, i32>("SELECT 1 FROM nddev_schema_meta WHERE key = 'product' AND value = 'nddev-device-sync-server' AND EXISTS (SELECT 1 FROM nddev_schema_meta WHERE key='schema_version' AND value=$1)").bind(database::REQUIRED_SCHEMA_VERSION.to_string()).fetch_one(&database),
     )
     .await
     {

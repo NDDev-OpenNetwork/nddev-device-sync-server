@@ -14,8 +14,11 @@ clippy:
 
 check: fmt-check test clippy
 
+protocol-check:
+    python3 scripts/check-protocol.py
 
-# Uses a new disposable PostgreSQL container, tmpfs data and synthetic secrets.
+
+# Real PostgreSQL + SMTP mailbox, tmpfs data and generated synthetic identities.
 integration-postgres:
     cargo build --locked
     python3 scripts/check-postgres.py

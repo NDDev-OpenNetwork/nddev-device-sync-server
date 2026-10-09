@@ -96,6 +96,7 @@ async fn https_preserves_headers_and_only_reloads_valid_pairs() {
         telemetry_enabled: true,
         max_connections: 256,
         max_requests: 64,
+        identity: None,
     })
     .await
     .unwrap();

@@ -1,0 +1,12 @@
+# Optional identity overlay; prepare this private directory before Compose up.
+services:
+  nddev-sync-server:
+    environment:
+      NDS_AUTH_CONFIG_FILE: /run/nds-auth/config.json
+    volumes:
+      - type: bind
+        source: ${NDS_AUTH_DIRECTORY:?Set an operator-owned identity directory}
+        target: /run/nds-auth
+        read_only: true
+        bind:
+          create_host_path: false
