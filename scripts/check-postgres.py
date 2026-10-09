@@ -59,8 +59,10 @@ try:
         created = True
         host_port = json.loads(command("docker", "inspect", name))[0]["NetworkSettings"]["Ports"]["5432/tcp"][0]["HostPort"]
         for _ in range(100):
-            result = sql("SELECT 1", check=False)
-            if result.returncode == 0 and sql("SELECT count(*) FROM pg_roles WHERE rolname='nds_runtime'").stdout.strip() == "1":
+            # Initdb restarts PostgreSQL after provisioning roles. Every probe
+            # must tolerate that transition rather than chaining a checked query.
+            result = sql("SELECT count(*) FROM pg_roles WHERE rolname='nds_runtime'", check=False)
+            if result.returncode == 0 and result.stdout.strip() == "1":
                 # Wait for final TCP server, not the initialization socket server.
                 try:
                     with socket.create_connection(("127.0.0.1", int(host_port)), timeout=0.2):
