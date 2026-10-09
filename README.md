@@ -7,7 +7,8 @@ The first vertical slice provides:
 - structured JSON startup/request logs;
 - request correlation through `traceparent` or generated trace IDs;
 - `/v1/health`, `/v1/ready` and `/source` endpoints;
-- PostgreSQL readiness and a baseline migration;
+- PostgreSQL readiness and an explicit migration command with a separate identity;
+- direct Rust/rustls HTTPS, bounded connection drain and safe certificate reload;
 - pinned consumption of the public core and protocol releases;
 - a module count exposed from the compiled core registry.
 
@@ -23,8 +24,13 @@ just test
 just clippy
 ```
 
-Set `DATABASE_URL` to enable PostgreSQL readiness and migrations. Without it,
-the process still starts for route tests, while `/v1/ready` reports degraded.
+Set `DATABASE_URL_FILE` (or `DATABASE_URL`) to enable PostgreSQL readiness.
+Run the explicit `migrate` command with `NDS_MIGRATION_DATABASE_URL_FILE` first;
+runtime startup does not execute DDL. Without a runtime database URL the process
+still starts for route tests, while `/v1/ready` reports degraded.
+
+See [self-hosting](docs/self-hosting.md) for HTTPS, mounted secrets, role separation,
+Compose, certificate reload and resource bounds, and [dependency decisions](docs/dependencies.md).
 
 Requests have a 15-second handler deadline; pool acquisition and database
 readiness queries have a 3-second deadline. Completion logs retain the request

@@ -1,0 +1,123 @@
+# Set image/source pins and file paths outside Git. See docs/self-hosting.md.
+x-app: &app
+  image: ${NDS_IMAGE:?Set the reviewed application image reference}
+  build:
+    context: .
+    args:
+      NDS_SOURCE_COMMIT: ${NDS_SOURCE_COMMIT:?Set the full source commit}
+  user: "10001:10001"
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  pids_limit: 128
+  mem_limit: 512m
+  cpus: 1.0
+  logging:
+    driver: local
+    options:
+      max-size: 10m
+      max-file: "3"
+
+services:
+  postgres:
+    image: postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c
+    user: postgres
+    restart: unless-stopped
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    environment:
+      POSTGRES_DB: nds
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_admin_password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=trust
+    secrets:
+      - postgres_admin_password
+      - postgres_migrator_password
+      - postgres_runtime_password
+    volumes:
+      - postgres_data:/var/lib/postgresql
+      - ./deploy/postgres-init.sh:/docker-entrypoint-initdb.d/10-nds-roles.sh:ro
+    tmpfs:
+      - /var/run/postgresql:uid=999,gid=999,mode=3775,size=16m
+      - /tmp:uid=999,gid=999,mode=1777,size=32m
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U postgres -d nds"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 30s
+    shm_size: 128m
+    pids_limit: 128
+    mem_limit: 1g
+    cpus: 1.5
+    stop_grace_period: 30s
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  migrate:
+    <<: *app
+    command: [migrate]
+    restart: "no"
+    environment:
+      NDS_MIGRATION_DATABASE_URL_FILE: /run/secrets/migration_database_url
+    secrets: [migration_database_url]
+    networks: [database]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nddev-sync-server:
+    <<: *app
+    restart: unless-stopped
+    environment:
+      NDS_SERVER_ADDR: 0.0.0.0:8443
+      DATABASE_URL_FILE: /run/secrets/runtime_database_url
+      NDS_TLS_CERT_FILE: /run/nds-tls/current/fullchain.pem
+      NDS_TLS_KEY_FILE: /run/nds-tls/current/privkey.pem
+      NDS_TELEMETRY_ENABLED: ${NDS_TELEMETRY_ENABLED:-true}
+      NDS_PUBLIC_HOST: ${NDS_PUBLIC_HOST:?Set certificate hostname}
+    secrets: [runtime_database_url]
+    volumes:
+      # A directory mount sees atomic certificate replacements; file mounts do not.
+      - type: bind
+        source: ${NDS_TLS_DIRECTORY:?Set an operator-owned TLS directory}
+        target: /run/nds-tls
+        read_only: true
+        bind:
+          create_host_path: false
+    ports: ["${NDS_HTTPS_BIND:-127.0.0.1}:443:8443"]
+    networks: [edge, database]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD-SHELL, 'curl --silent --fail --noproxy "*" --max-time 4 --resolve "$${NDS_PUBLIC_HOST}:8443:127.0.0.1" "https://$${NDS_PUBLIC_HOST}:8443/v1/ready" > /dev/null']
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    stop_grace_period: 25s
+
+networks:
+  edge: {}
+  database:
+    internal: true
+
+volumes:
+  postgres_data: {}
+
+secrets:
+  postgres_admin_password:
+    file: ${NDS_SECRETS_DIRECTORY:?Set operator-owned secrets directory}/postgres_admin_password
+  postgres_migrator_password:
+    file: ${NDS_SECRETS_DIRECTORY}/postgres_migrator_password
+  postgres_runtime_password:
+    file: ${NDS_SECRETS_DIRECTORY}/postgres_runtime_password
+  migration_database_url:
+    file: ${NDS_SECRETS_DIRECTORY}/migration_database_url
+  runtime_database_url:
+    file: ${NDS_SECRETS_DIRECTORY}/runtime_database_url
