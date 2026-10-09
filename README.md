@@ -32,6 +32,9 @@ trace/span context and use matched route patterns, never raw URL paths or query
 strings. Database readiness errors expose a stable error class rather than
 driver messages. The server accepts version `00` W3C trace context with lowercase
 hexadecimal identifiers and flags, replacing invalid input with a fresh trace ID.
+All HTTP responses, including readiness failures and timeouts, use
+`Cache-Control: no-store`. An instance that requires direct origin access must
+also use DNS-only records and omit CDN/proxy response caching in its deployment.
 
 The local JSON log remains available for diagnosis. The telemetry-enabled health
 field describes operator intent; delivery through the future observability
