@@ -16,20 +16,31 @@ central standards.
 
 ## Standards compatibility
 
-The module standards lock remains at `v0.0.1-alpha.7` (`592531d`).
-Central `v0.0.1-alpha.8` (`c73a525`) changes assembly catalog metadata only;
-the normative `standarts/` files are identical. The older lock is compatible
-with the current assembly. Update locks only through the canonical source
-release, not through a mutable branch.
+The identity slice adopts `v0.0.1-alpha.9`
+(`16a477beac6127adf73ef102df74a48451d607f1`). ADR 0003 permits email OTP and
+GitHub PKCE for one explicitly configured owner. `module.yaml` records the
+immutable paired core and protocol commits. These development commits do not
+rename published releases or imply enrollment/sync acceptance.
 
-The server currently consumes core and protocol alpha.5. Core runtime sources
-and wire schemas are unchanged through alpha.7; these pins remain explicit
-until the next coordinated contract change. OAuth, enrollment and sync-log
-acceptance are separate from the existing health/readiness route checks.
+`just protocol-check` regenerates the owned authentication DTO from the exact
+protocol commit, its locked quicktype tool and rustfmt. It reads existing local
+Git objects when available or downloads only the pinned source files into a
+temporary directory. It never clones another checkout or edits the generated
+consumer as a substitute for changing its canonical schema.
 
 Run `just integration-postgres` for the explicit migration boundary. It creates
 only a new loopback-only PostgreSQL container with tmpfs storage and generated
 test secrets, validates migrations from zero and repeated runs, proves the
 runtime cannot create tables or modify the SQLx ledger, rejects an administrative
-runtime identity, and stops that test container. No operator database or named
-volume is inspected or modified. CI runs this after `just check`.
+runtime identity, and stops that test container. The same isolated database and
+a pinned Mailpit SMTP mailbox exercise real OTP delivery, concurrent replay,
+resend/attempt/expiry rules, owner binding, session persistence/revocation and
+socket-source rate limits. Private operator databases and mailboxes are not used.
+Local SMTP capture does not prove delivery to an external provider's mailbox;
+live GitHub identity/consent acceptance remains a separate observation.
+
+For a real client, `scripts/check-postgres.py --fixture-receipt <new-absolute-path>
+--fixture-seconds 1800` starts the same isolated runtime and writes a private
+receipt containing its loopback API, Mailpit API and generated owner address.
+Create the receipt's `stop_marker` to finish early; the bounded lease also stops
+the owned processes/containers automatically. The receipt must be outside Git.

@@ -1,10 +1,11 @@
 //! One process envelope and an explicit, finite diagnostic window. Dependency
 //! verbosity and arbitrary RUST_LOG directives never bypass this boundary.
+use std::io;
 use std::{
     collections::BTreeMap,
     fmt,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, AtomicU32, Ordering},
     },
     time::{Duration, Instant},
@@ -108,6 +109,9 @@ impl Settings {
 }
 
 fn module(target: &str) -> &'static str {
+    if target.starts_with("nddev_device_sync_server::identity") {
+        return "identity";
+    }
     match target.strip_prefix("nddev_device_sync_server") {
         Some("") => "http",
         Some("::transport") => "transport",
@@ -118,6 +122,62 @@ fn module(target: &str) -> &'static str {
 }
 
 struct Envelope(BTreeMap<&'static str, String>);
+
+const MAX_SEQUENCE: u64 = 9_007_199_254_740_991;
+#[derive(Clone)]
+struct ProducerWriter(Arc<Producer>);
+struct Producer {
+    instance: uuid::Uuid,
+    sequence: Mutex<u64>,
+}
+impl ProducerWriter {
+    fn new() -> Self {
+        Self(Arc::new(Producer {
+            instance: uuid::Uuid::new_v4(),
+            sequence: Mutex::new(0),
+        }))
+    }
+}
+impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for ProducerWriter {
+    type Writer = Self;
+    fn make_writer(&'writer self) -> Self::Writer {
+        self.clone()
+    }
+}
+impl io::Write for ProducerWriter {
+    fn write(&mut self, buffer: &[u8]) -> io::Result<usize> {
+        if !buffer.starts_with(b"{") || !buffer.ends_with(b"}\n") || buffer.len() < 4 {
+            return Err(io::Error::other(
+                "log formatter did not emit an object record",
+            ));
+        }
+        let mut sequence = self
+            .0
+            .sequence
+            .lock()
+            .map_err(|_| io::Error::other("producer sequence lock unavailable"))?;
+        let mut output = io::stdout().lock();
+        // Assignment and the complete write share one lock: concurrent formatter
+        // completion cannot reorder the producer stream. No queue is introduced.
+        if *sequence < MAX_SEQUENCE {
+            *sequence += 1;
+            write!(
+                output,
+                "{{\"producer.instance_id\":\"{}\",\"producer.sequence\":{},",
+                self.0.instance, *sequence
+            )?;
+            output.write_all(&buffer[1..])?;
+        } else {
+            // The optional pair is absent after exhaustion, never wrapped or
+            // reused. Consumers report unsequenced/degraded observations.
+            output.write_all(buffer)?;
+        }
+        Ok(buffer.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().flush()
+    }
+}
 
 impl<S, N> FormatEvent<S, N> for Envelope
 where
@@ -169,6 +229,8 @@ where
         for (name, value) in &self.0 {
             output.insert((*name).into(), value.clone().into());
         }
+        output.remove("producer.instance_id");
+        output.remove("producer.sequence");
         writeln!(writer, "{}", Value::Object(output))
     }
 }
@@ -270,6 +332,7 @@ pub fn init_logging() -> Result<LoggingGuard, LoggingError> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
+                .with_writer(ProducerWriter::new())
                 .fmt_fields(JsonFields::new())
                 .event_format(Envelope(settings.metadata))
                 .with_filter(filter),

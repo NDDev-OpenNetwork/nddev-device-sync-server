@@ -54,6 +54,16 @@ impl Process {
             .lines()
             .map(|line| serde_json::from_str(line).unwrap())
             .collect();
+        if let Some(first) = events.first() {
+            let instance = first["producer.instance_id"]
+                .as_str()
+                .expect("producer instance");
+            uuid::Uuid::parse_str(instance).unwrap();
+            for (index, event) in events.iter().enumerate() {
+                assert_eq!(event["producer.instance_id"], instance);
+                assert_eq!(event["producer.sequence"], (index + 1) as u64);
+            }
+        }
         for event in &events {
             for field in [
                 "timestamp",
@@ -138,6 +148,24 @@ fn real_http_completion_uses_the_common_formatter_and_excludes_request_secrets()
     ] {
         assert!(!text.contains(secret));
     }
+}
+
+#[test]
+fn concurrent_requests_keep_output_sequences_contiguous() {
+    let (process, port) = server(&[]);
+    std::thread::scope(|scope| {
+        for index in 0..8 {
+            scope.spawn(move || {
+                assert!(
+                    request(port, &format!("{:032x}", index + 100))
+                        .unwrap()
+                        .starts_with("HTTP/1.1 200")
+                )
+            });
+        }
+    });
+    let (success, _, _) = process.finish(true);
+    assert!(success);
 }
 
 fn server(settings: &[(&str, &str)]) -> (Process, u16) {

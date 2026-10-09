@@ -13,6 +13,9 @@ use axum::{Extension, Router};
 use tokio::sync::Semaphore;
 use tower::Service;
 
+#[derive(Clone, Copy)]
+pub(crate) struct PeerAddress(pub std::net::IpAddr);
+
 /// Rejections are a pressure counter, not sampled security/audit events. Report
 /// the first, powers of two, and the final count on recovery without a log queue.
 #[derive(Default)]
@@ -69,7 +72,7 @@ impl Service<SocketAddr> for Connections {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, _address: SocketAddr) -> Self::Future {
+    fn call(&mut self, address: SocketAddr) -> Self::Future {
         // axum-server drops this accepted socket on MakeService error, before
         // spawning a connection task or attempting its TLS handshake.
         let Ok(permit) = self.permits.clone().try_acquire_owned() else {
@@ -79,6 +82,10 @@ impl Service<SocketAddr> for Connections {
         self.pressure.recover("connections");
         // The Router and its in-flight requests retain this permit. A failed
         // TLS handshake drops the Router too, without a separate cleanup task.
-        ready(Ok(self.app.clone().layer(Extension(Arc::new(permit)))))
+        ready(Ok(self
+            .app
+            .clone()
+            .layer(Extension(Arc::new(permit)))
+            .layer(Extension(PeerAddress(address.ip())))))
     }
 }

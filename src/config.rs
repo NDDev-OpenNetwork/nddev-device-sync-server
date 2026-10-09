@@ -4,7 +4,7 @@ use thiserror::Error;
 
 pub const DEFAULT_VERSION: &str = "0.0.1-alpha.8";
 pub const DEFAULT_CHANNEL: &str = "alpha";
-pub const DEFAULT_STANDARDS_RELEASE: &str = "v0.0.1-alpha.7";
+pub const DEFAULT_STANDARDS_RELEASE: &str = "v0.0.1-alpha.9";
 
 /// A secret is deliberately absent from Debug, including nested config values.
 #[derive(Clone)]
@@ -46,6 +46,7 @@ pub struct ServerConfig {
     pub telemetry_enabled: bool,
     pub max_connections: usize,
     pub max_requests: usize,
+    pub identity: Option<crate::identity::config::AuthConfig>,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -64,6 +65,10 @@ pub enum ConfigError {
     MigrationDatabaseMissing,
     #[error("admission limit is outside its supported range")]
     AdmissionLimit,
+    #[error("invalid identity configuration")]
+    Identity,
+    #[error("identity requires HTTPS except on a loopback listener")]
+    IdentityHttpsRequired,
 }
 
 impl ServerConfig {
@@ -84,7 +89,7 @@ impl ServerConfig {
             }),
             _ => return Err(ConfigError::TlsPair),
         };
-        Ok(Self {
+        let config = Self {
             addr,
             database_url: read_secret(get("DATABASE_URL"), get("DATABASE_URL_FILE"))?,
             tls,
@@ -100,7 +105,14 @@ impl ServerConfig {
                 .unwrap_or(true),
             max_connections: admission_limit(get("NDS_MAX_CONNECTIONS"), 256, 4096)?,
             max_requests: admission_limit(get("NDS_MAX_REQUESTS"), 64, 1024)?,
-        })
+            identity: get("NDS_AUTH_CONFIG_FILE")
+                .map(|path| crate::identity::config::AuthConfig::read(&path))
+                .transpose()?,
+        };
+        if config.identity.is_some() && config.tls.is_none() && !config.addr.ip().is_loopback() {
+            return Err(ConfigError::IdentityHttpsRequired);
+        }
+        Ok(config)
     }
 }
 
@@ -128,7 +140,7 @@ pub fn migration_database_url() -> Result<SecretString, ConfigError> {
     .ok_or(ConfigError::MigrationDatabaseMissing)
 }
 
-fn read_secret(
+pub(crate) fn read_secret(
     value: Option<String>,
     file: Option<String>,
 ) -> Result<Option<SecretString>, ConfigError> {

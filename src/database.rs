@@ -9,6 +9,7 @@ use thiserror::Error;
 use crate::config::SecretString;
 
 pub const DATABASE_TIMEOUT: Duration = Duration::from_secs(3);
+pub const REQUIRED_SCHEMA_VERSION: i64 = 2;
 const MIGRATION_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Error)]
@@ -21,6 +22,8 @@ pub enum DatabaseError {
     Migration,
     #[error("database migration deadline exceeded")]
     MigrationTimeout,
+    #[error("identity setup unavailable or configured binding differs")]
+    Identity,
 }
 
 async fn connect(url: &SecretString, max_connections: u32) -> Result<PgPool, DatabaseError> {
@@ -75,7 +78,7 @@ pub async fn migrate(url: &SecretString) -> Result<(), DatabaseError> {
     if result.is_ok() {
         tracing::info!(
             event.name = "database.migration.completed",
-            migration.version = 1,
+            migration.version = REQUIRED_SCHEMA_VERSION,
             duration_ms = started.elapsed().as_secs_f64() * 1000.0,
             outcome = "ok"
         );
