@@ -13,7 +13,7 @@ axum = "0.8.9"
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
-nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "3400a9d766fa2838973fab96981806c9c25eef5d" }
+nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "5fc6c3a6cc450880b3a313b7552d411a11b48134" }
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls-no-provider", "form", "json"] }
 ring = "0.17"
