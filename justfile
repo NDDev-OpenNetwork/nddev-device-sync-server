@@ -7,12 +7,17 @@ fmt-check:
     cargo fmt --all -- --check
 
 test:
-    cargo test --workspace
+    cargo nextest run --locked --workspace --jobs 4
+    cargo test --locked --workspace --doc --jobs 4
 
 clippy:
-    cargo clippy --workspace --all-targets -- -D warnings
+    cargo clippy --locked --workspace --all-targets --jobs 4 -- -D warnings
 
-check: fmt-check test clippy
+dependencies-check:
+    cargo audit --deny warnings
+    cargo deny --locked check licenses sources
+
+check: fmt-check test clippy dependencies-check
 
 protocol-check:
     python3 scripts/check-protocol.py
@@ -23,5 +28,5 @@ protocol-generate:
 
 # Real PostgreSQL + SMTP mailbox, tmpfs data and generated synthetic identities.
 integration-postgres:
-    cargo build --locked
+    cargo build --locked --jobs 4
     python3 scripts/check-postgres.py
