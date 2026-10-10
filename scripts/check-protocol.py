@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """Regenerate the consumed DTO from its immutable canonical source; no Git clone."""
+import argparse
 from pathlib import Path
 import subprocess
 import tempfile
 from protocol_source import ROOT, source
 FILES = ["package.json", "package-lock.json", "scripts/generate-dtos.mjs", "contracts/v2/control-plane.schema.json"]
+arguments = argparse.ArgumentParser(description=__doc__)
+arguments.add_argument("--write", action="store_true", help="Write the consumer DTOs from the exact manifest pin instead of checking drift")
+options = arguments.parse_args()
 
 
 with tempfile.TemporaryDirectory(prefix="nds-protocol-check-") as directory:
@@ -14,8 +18,13 @@ with tempfile.TemporaryDirectory(prefix="nds-protocol-check-") as directory:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(source(name))
     subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=directory, check=True, timeout=120, stdout=subprocess.DEVNULL)
-    output = directory / "auth.rs"
-    subprocess.run(["node", "scripts/generate-dtos.mjs", "rust", "auth", str(output)], cwd=directory, check=True, timeout=30)
-    subprocess.run(["rustfmt", "--edition", "2024", str(output)], cwd=ROOT, check=True, timeout=20)
-    assert output.read_bytes() == (ROOT / "src/protocol_v2.rs").read_bytes(), "protocol DTO drift: regenerate from the manifest's exact protocol commit, then rustfmt"
-print("Canonical auth DTO regeneration passed.")
+    for profile, target in [("auth", "protocol_v2.rs"), ("devices", "protocol_devices.rs")]:
+        output = directory / target
+        subprocess.run(["node", "scripts/generate-dtos.mjs", "rust", profile, str(output)], cwd=directory, check=True, timeout=30)
+        subprocess.run(["rustfmt", "--edition", "2024", str(output)], cwd=ROOT, check=True, timeout=20)
+        destination = ROOT / "src" / target
+        if options.write:
+            destination.write_bytes(output.read_bytes())
+        else:
+            assert output.read_bytes() == destination.read_bytes(), "protocol DTO drift: run just protocol-generate from the manifest's exact protocol commit"
+print("Canonical auth and device DTOs generated." if options.write else "Canonical auth and device DTO regeneration passed.")

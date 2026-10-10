@@ -12,7 +12,7 @@ axum = "0.8.9"
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
-nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "9bc379e0a0d921b8478fb2e736d97280ce3dc0aa" }
+nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "3513d377dc33ca0fb787319b49c35506d7d5cdf7" }
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls-no-provider", "form", "json"] }
 ring = "0.17"
@@ -28,6 +28,7 @@ tower = { version = "0.5", default-features = false }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "json"] }
 uuid = { version = "1.27", features = ["serde", "v4"] }
+ed25519-dalek = { version = "=3.0.0", default-features = false }
 
 [dev-dependencies]
 http-body-util = "0.1"

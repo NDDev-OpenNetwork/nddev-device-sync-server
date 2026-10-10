@@ -1,8 +1,10 @@
 mod admission;
 pub mod config;
 pub mod database;
+pub mod devices;
 pub mod identity;
 pub mod logging;
+pub mod protocol_devices;
 pub mod protocol_v2;
 pub mod transport;
 
@@ -42,6 +44,7 @@ pub struct AppState {
     pub database: Option<PgPool>,
     pub module_count: usize,
     pub identity: Option<Arc<identity::Service>>,
+    pub devices: Option<Arc<devices::Service>>,
     requests: Arc<Semaphore>,
     pressure: Arc<admission::Pressure>,
 }
@@ -64,8 +67,14 @@ impl AppState {
             ),
             None => None,
         };
+        let devices = config.identity.as_ref().and_then(|identity| {
+            database
+                .clone()
+                .map(|database| Arc::new(devices::initialize(database, identity.crypto.clone())))
+        });
         Ok(Self {
             identity,
+            devices,
             requests: Arc::new(Semaphore::new(config.max_requests)),
             pressure: Arc::default(),
             config,
@@ -93,6 +102,7 @@ impl AppState {
             database: None,
             module_count: builtin_modules().len(),
             identity: None,
+            devices: None,
             requests: Arc::new(Semaphore::new(64)),
             pressure: Arc::default(),
         }
@@ -130,6 +140,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/ready", get(ready))
         .route("/source", get(source))
         .merge(identity::http::routes())
+        .merge(devices::http::routes())
         .layer(DefaultBodyLimit::max(65_536))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, request_trace))

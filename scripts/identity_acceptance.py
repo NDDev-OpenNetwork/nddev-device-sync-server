@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from enrollment_acceptance import check_enrollment
 
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
 
@@ -57,7 +58,8 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             except urllib.error.HTTPError as error:
                 response = error
             with response:
-                raw = response.read()
+                raw = response.read(65537)
+                assert len(raw) <= 65536, "response exceeded the protocol byte budget"
                 assert response.headers["Cache-Control"] == "no-store"
                 assert len(response.headers["X-Request-Id"]) == 32
                 return response.status, json.loads(raw) if raw else None
@@ -223,14 +225,36 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         status, session_issued = request("/v2/auth/email/verify", {"challenge_id": session_receipt["challenge_id"], "code": session_code})
         assert status == 200
         sensitive.append(session_issued["session_token"])
+
+        def second_session():
+            expected_count = len(messages()) + 1
+            sql("DELETE FROM nds_auth_limits; DELETE FROM nds_email_challenges;")
+            status, receipt = request("/v2/auth/email/challenges", {"email": owner})
+            assert status == 202
+            status, issued = request("/v2/auth/email/verify", {"challenge_id": receipt["challenge_id"], "code": code(expected_count)})
+            assert status == 200
+            return issued["session_token"]
+
+        def restart_enrollment():
+            nonlocal server, logs
+            logs += stop(server)
+            assert server.returncode == 0
+            server = start()
+
+        sensitive += check_enrollment(request, session_issued["session_token"], second_session, restart_enrollment, directory, sql)
+        expired_logout = second_session()
+        sensitive.append(expired_logout)
+        mail_count = len(messages())
         sql("UPDATE nds_sessions SET expires_at_ms=0")
+        assert request("/v2/session", token=expired_logout, method="DELETE")[0] == 401
+        assert sql("SELECT count(*) FROM nds_sessions").stdout.strip() == "1", "expired logout deletion rolled back"
         assert request("/v2/session", token=session_issued["session_token"])[0] == 401
         assert sql("SELECT count(*) FROM nds_sessions").stdout.strip() == "0"
         sql("DELETE FROM nds_auth_limits; DELETE FROM nds_email_challenges;")
         for attempt in range(11):
             status, _ = request("/v2/auth/email/challenges", {"email": uuid.uuid4().hex + "@example.invalid"}, headers={"X-Forwarded-For": f"192.0.2.{attempt + 1}"})
             assert status == (202 if attempt < 10 else 429), "socket-source budget was bypassed through headers or new ports"
-        assert len(messages()) == 5
+        assert len(messages()) == mail_count
         assert request("/v2/auth/github/start", {})[0] == 503
         sql("DELETE FROM nds_auth_limits; DELETE FROM nds_email_challenges;")
         command("docker", "stop", "--time", "5", mailbox)

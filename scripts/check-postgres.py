@@ -117,9 +117,13 @@ try:
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
         for _ in range(2):
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "2"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "3"
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
+        assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0
+        assert sql("UPDATE nds_sessions SET user_id=user_id WHERE false", "nds_runtime", check=False).returncode != 0
+        assert sql("UPDATE nds_devices SET public_key=public_key WHERE false", "nds_runtime", check=False).returncode != 0
+        assert sql("UPDATE nds_enrollment_challenges SET challenge=challenge WHERE false", "nds_runtime", check=False).returncode != 0
         server = subprocess.Popen([BINARY, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
         wait_ready(port, 200)
         # Actual PostgreSQL lock contention holds the only request permit. The
