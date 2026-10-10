@@ -24,7 +24,6 @@ use axum::{
     routing::get,
 };
 use database::DATABASE_TIMEOUT;
-use nddev_device_sync_application::builtin_modules;
 use opentelemetry::{
     Context,
     propagation::{Extractor, TextMapPropagator},
@@ -50,7 +49,6 @@ pub const SOURCE_COMMIT: &str = match option_env!("NDS_BUILD_COMMIT") {
 pub struct AppState {
     pub config: ServerConfig,
     pub database: Option<PgPool>,
-    pub module_count: usize,
     pub identity: Option<Arc<identity::Service>>,
     pub devices: Option<Arc<devices::Service>>,
     requests: Arc<Semaphore>,
@@ -87,7 +85,6 @@ impl AppState {
             pressure: Arc::default(),
             config,
             database,
-            module_count: builtin_modules().len(),
         })
     }
 
@@ -108,7 +105,6 @@ impl AppState {
                 identity: None,
             },
             database: None,
-            module_count: builtin_modules().len(),
             identity: None,
             devices: None,
             requests: Arc::new(Semaphore::new(64)),
@@ -269,7 +265,9 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         channel: state.config.channel,
         standards_release: state.config.standards_release,
         source_commit: SOURCE_COMMIT,
-        module_count: state.module_count,
+        // This control plane composes no native-tool adapter manifests.
+        // Keep the v1 field for existing clients; the agent owns actual inventory.
+        module_count: 0,
         telemetry_enabled: state.config.telemetry_enabled,
         database_configured: state.database.is_some(),
     })
@@ -357,6 +355,7 @@ mod tests {
         assert_eq!(value["status"], "ok");
         assert_eq!(value["channel"], "alpha");
         assert_eq!(value["telemetry_enabled"], true);
+        assert_eq!(value["module_count"], 0);
         let spans = _captured.0.lock().unwrap();
         assert_eq!(spans.len(), 1);
         assert_eq!(spans[0].span_kind, opentelemetry::trace::SpanKind::Server);
