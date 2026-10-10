@@ -18,7 +18,7 @@ with tempfile.TemporaryDirectory(prefix="nds-protocol-check-") as directory:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(source(name))
     subprocess.run(["npm", "ci", "--ignore-scripts", "--no-audit", "--no-fund"], cwd=directory, check=True, timeout=120, stdout=subprocess.DEVNULL)
-    for profile, target in [("auth", "protocol_v2.rs"), ("devices", "protocol_devices.rs")]:
+    for profile, target in [("auth", "protocol_v2.rs"), ("devices", "protocol_devices.rs"), ("sync", "protocol_sync.rs")]:
         output = directory / target
         subprocess.run(["node", "scripts/generate-dtos.mjs", "rust", profile, str(output)], cwd=directory, check=True, timeout=30)
         subprocess.run(["rustfmt", "--edition", "2024", str(output)], cwd=ROOT, check=True, timeout=20)

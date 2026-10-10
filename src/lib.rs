@@ -5,7 +5,9 @@ pub mod devices;
 pub mod identity;
 pub mod logging;
 pub mod protocol_devices;
+pub mod protocol_sync;
 pub mod protocol_v2;
+pub mod sync;
 #[cfg(test)]
 mod telemetry_test;
 pub mod transport;
@@ -51,6 +53,7 @@ pub struct AppState {
     pub database: Option<PgPool>,
     pub identity: Option<Arc<identity::Service>>,
     pub devices: Option<Arc<devices::Service>>,
+    pub sync: Option<Arc<sync::Service>>,
     requests: Arc<Semaphore>,
     pressure: Arc<admission::Pressure>,
 }
@@ -78,9 +81,17 @@ impl AppState {
                 .clone()
                 .map(|database| Arc::new(devices::initialize(database, identity.crypto.clone())))
         });
+        let sync = config.public_origin.as_ref().and_then(|_| {
+            identity.as_ref().and_then(|_| {
+                database
+                    .clone()
+                    .map(|database| Arc::new(sync::initialize(database)))
+            })
+        });
         Ok(Self {
             identity,
             devices,
+            sync,
             requests: Arc::new(Semaphore::new(config.max_requests)),
             pressure: Arc::default(),
             config,
@@ -100,6 +111,7 @@ impl AppState {
                 standards_release: "test".into(),
                 source_url: "https://nddev.ai".into(),
                 telemetry_enabled: true,
+                public_origin: None,
                 max_connections: 256,
                 max_requests: 64,
                 identity: None,
@@ -107,6 +119,7 @@ impl AppState {
             database: None,
             identity: None,
             devices: None,
+            sync: None,
             requests: Arc::new(Semaphore::new(64)),
             pressure: Arc::default(),
         }
@@ -145,6 +158,7 @@ pub fn router(state: AppState) -> Router {
         .route("/source", get(source))
         .merge(identity::http::routes())
         .merge(devices::http::routes())
+        .merge(sync::routes())
         .layer(DefaultBodyLimit::max(65_536))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, request_trace))
