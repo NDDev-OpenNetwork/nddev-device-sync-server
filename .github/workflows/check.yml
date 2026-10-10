@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   quality:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -27,7 +27,12 @@ jobs:
           just-version: '1.58.0'
       - name: Install pinned Rust toolchain
         run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt,clippy
-      - name: Check formatting, tests and Clippy
+      - name: Install pinned quality tools
+        run: |
+          cargo install --locked --version 0.9.148 cargo-nextest
+          cargo install --locked --version 0.22.2 cargo-audit
+          cargo install --locked --version 0.20.2 cargo-deny
+      - name: Check formatting, locked tests, Clippy and dependency policy
         run: just check
       - name: Verify canonical protocol generation
         run: just protocol-check
