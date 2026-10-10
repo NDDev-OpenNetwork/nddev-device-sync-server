@@ -154,7 +154,8 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
                 validate_events(logs)
             return
         denied_status, denied_receipt = request("/v2/auth/email/challenges", {"email": unknown})
-        status, receipt = request("/v2/auth/email/challenges", {"email": owner.upper()}, headers={"Accept-Language": "ru"})
+        otp_trace = secrets.token_hex(16)
+        status, receipt = request("/v2/auth/email/challenges", {"email": owner.upper()}, headers={"Accept-Language": "ru", "traceparent": f"00-{otp_trace}-{secrets.token_hex(8)}-01"})
         assert status == denied_status == 202
         assert denied_receipt.keys() == receipt.keys()
         assert len(denied_receipt["challenge_id"]) == len(receipt["challenge_id"]) == 43
@@ -188,11 +189,13 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         wrong_config.write_text(json.dumps(config | {"owner_email": unknown}))
         wrong_config.chmod(0o600)
         rejected = subprocess.run([binary, "serve"], env=env | {"NDS_AUTH_CONFIG_FILE": str(wrong_config), "NDS_SERVER_ADDR": "127.0.0.1:0"}, capture_output=True, text=True, timeout=8)
-        assert rejected.returncode != 0 and "identity setup unavailable" in rejected.stdout
+        assert rejected.returncode != 0
+        assert any(event.get("event.name") == "process.failed" and event.get("error.type") == "database_identity" for event in map(json.loads, rejected.stdout.splitlines()))
         logs += rejected.stdout + rejected.stderr
         assert request("/v2/session", token=token) == (200, issued["session"])
         plaintext = subprocess.run([binary, "serve"], env=env | {"NDS_SERVER_ADDR": "0.0.0.0:0"}, capture_output=True, text=True, timeout=8)
-        assert plaintext.returncode != 0 and "identity requires HTTPS" in plaintext.stdout
+        assert plaintext.returncode != 0
+        assert any(event.get("event.name") == "process.failed" and event.get("error.type") == "configuration_identity_https_required" for event in map(json.loads, plaintext.stdout.splitlines()))
         logs += plaintext.stdout + plaintext.stderr
         assert request("/v2/session", token=token, method="DELETE")[0] == 204
         assert request("/v2/session", token=token)[0] == 401
@@ -276,7 +279,14 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         assert str(directory) not in logs
         validate_events(logs)
         events = [json.loads(line) for line in logs.splitlines() if line]
-        assert any(event.get("event.name") == "email.delivery.accepted" and event["mailbox_delivery"] == "unverified" for event in events)
+        completion = next(event for event in events if event.get("event.name") == "http.request.completed" and event.get("trace_id") == otp_trace)
+        delivery = next(event for event in events if event.get("event.name") == "email.delivery.accepted" and event.get("trace_id") == otp_trace)
+        assert completion["status"] == 202 and completion["module"] == "http"
+        assert delivery["module"] == "identity" and delivery["scope"] == "transport" and delivery["mailbox_delivery"] == "unverified"
+        assert delivery["span_id"] != completion["span_id"], "SMTP must have its own child span"
+        device_events = [event for event in events if event.get("event.name", "").startswith("device.")]
+        assert device_events and all(event["module"] == "devices" for event in device_events)
+        assert not any(event.get("event.name") in ("logging.fields.rejected", "logging.event.rejected") for event in events)
         assert any(event.get("event.name") == "identity.session.issued" for event in events)
         print("Identity acceptance passed: real isolated SMTP mailbox delivery; generic owner/other receipts; atomic replay denial; resend, attempts and expiry; persistent/revoked sessions; immutable bootstrap ownership; socket-only source limits; redacted logs. Live GitHub and external mailbox acceptance remain separate.")
     finally:

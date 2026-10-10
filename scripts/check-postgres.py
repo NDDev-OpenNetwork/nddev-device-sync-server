@@ -166,7 +166,7 @@ try:
         rejected = subprocess.run([BINARY, "serve"], env=env | {"DATABASE_URL_FILE": urls["admin"]}, capture_output=True, text=True, timeout=8)
         assert rejected.returncode != 0
         logs += rejected.stdout + rejected.stderr
-        assert "administrative or schema creation privileges" in rejected.stdout
+        assert any(event.get("event.name") == "process.failed" and event.get("error.type") == "database_runtime_role" for event in map(json.loads, rejected.stdout.splitlines()))
         for password in passwords.values():
             assert password not in logs
         assert str(directory) not in logs

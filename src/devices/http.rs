@@ -47,7 +47,7 @@ impl IntoResponse for ApiError {
                 dto::ErrorEnum::DependencyUnavailable,
             ),
         };
-        tracing::warn!(event.name="device.request.rejected",error.type=%self.0,outcome="rejected");
+        tracing::warn!(module = "devices", scope = "http", event.name="device.request.rejected",error.type=%self.0,outcome="rejected");
         let mut response = (status, Json(dto::Error { error })).into_response();
         if matches!(
             status,
@@ -141,7 +141,7 @@ async fn request(
     let value = service(&state)?
         .request(&authorization, input, &source, now)
         .await?;
-    tracing::info!(event.name="device.enrollment.requested",device.id=%value.device.id.as_str(),user.id=%authorization.session.owner.user_id.as_str(),tenant.id=%authorization.session.owner.tenant_id.as_str(),outcome="accepted");
+    tracing::info!(module = "devices", scope = "http", event.name="device.enrollment.requested",device.id=%value.device.id.as_str(),user.id=%authorization.session.owner.user_id.as_str(),tenant.id=%authorization.session.owner.tenant_id.as_str(),outcome="accepted");
     Ok((
         StatusCode::CREATED,
         Json(dto::EnrollmentChallenge {
@@ -168,7 +168,7 @@ async fn complete(
             now,
         )
         .await?;
-    tracing::info!(event.name="device.enrollment.completed",device.id=%value.id.as_str(),user.id=%value.owner.user_id.as_str(),tenant.id=%value.owner.tenant_id.as_str(),outcome="accepted");
+    tracing::info!(module = "devices", scope = "http", event.name="device.enrollment.completed",device.id=%value.id.as_str(),user.id=%value.owner.user_id.as_str(),tenant.id=%value.owner.tenant_id.as_str(),outcome="accepted");
     Ok((StatusCode::CREATED, Json(device(value)?)))
 }
 #[derive(Deserialize)]
@@ -220,6 +220,6 @@ async fn revoke(
     let authorization = authorization(&state, &headers, now).await?;
     let id = DeviceId::new(id).map_err(|_| DeviceError::InvalidInput)?;
     service(&state)?.revoke(&authorization, &id, now).await?;
-    tracing::info!(event.name="device.revoked",device.id=%id.as_str(),user.id=%authorization.session.owner.user_id.as_str(),tenant.id=%authorization.session.owner.tenant_id.as_str(),outcome="ok");
+    tracing::info!(module = "devices", scope = "http", event.name="device.revoked",device.id=%id.as_str(),user.id=%authorization.session.owner.user_id.as_str(),tenant.id=%authorization.session.owner.tenant_id.as_str(),outcome="ok");
     Ok(StatusCode::NO_CONTENT)
 }

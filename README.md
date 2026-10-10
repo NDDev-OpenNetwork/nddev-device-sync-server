@@ -6,8 +6,8 @@ Part of [NDDev OpenNetwork](https://nddev.ai).
 
 The current server provides:
 
-- one structured JSON envelope for process, migration and request events;
-- request correlation through `traceparent` or generated trace IDs;
+- one shared SDK JSON envelope for process, migration and request events;
+- real local OpenTelemetry request/SMTP spans and native W3C `traceparent` correlation;
 - `/v1/health`, `/v1/ready` and `/source` endpoints;
 - PostgreSQL readiness and an explicit migration command with a separate identity;
 - direct Rust/rustls HTTPS, bounded connection drain and safe certificate reload;
@@ -18,8 +18,7 @@ The current server provides:
 - generated wire types and immutable core/protocol source pins;
 - a module count exposed from the compiled core registry.
 
-Sync mutations, vault and the observability gateway are
-separate next steps. Without private identity configuration, `/v2/auth/methods`
+Sync mutations, vault and native server OTLP export are separate next steps. Without private identity configuration, `/v2/auth/methods`
 reports unavailable methods. Provider readiness does not prove a completed
 sign-in or delivery to an external mailbox.
 
@@ -52,12 +51,17 @@ Requests have a 15-second handler deadline; pool acquisition and database
 readiness queries have a 3-second deadline. Completion logs retain the request
 trace/span context and use matched route patterns, never raw URL paths or query
 strings. Database readiness errors expose a stable error class rather than
-driver messages. The server accepts version `00` W3C trace context with lowercase
-hexadecimal identifiers and flags, replacing invalid input with a fresh trace ID.
+driver messages. The maintained W3C propagator validates incoming `traceparent`
+and `tracestate`, including future-version handling; malformed or repeated
+traceparent headers start a fresh SDK trace. Each propagation header is capped
+at 512 bytes before native parsing. Remote sampling does not suppress
+local error/security events. SMTP jobs retain immutable parent IDs, not the live
+HTTP span, and create their own delivery span.
 All HTTP responses, including readiness failures and timeouts, use
 `Cache-Control: no-store`. An instance that requires direct origin access must
 also use DNS-only records and omit CDN/proxy response caching in its deployment.
 
 The local JSON log remains available for diagnosis. The telemetry-enabled health
-field describes operator intent; delivery through the future observability
-service and its enabled/disabled behavior remain a separate implementation step.
+field describes operator intent. This server configures no OTLP exporter: local
+contexts and NDJSON correlation do not prove exported spans or OpenObserve delivery.
+The observability service owns its separately verified export pipeline.

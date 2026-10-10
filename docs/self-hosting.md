@@ -225,18 +225,27 @@ they are introduced.
 
 ## Local logging
 
-Every process event uses one flat JSON envelope, including startup failures,
+The immutable shared SDK owns one flat JSON envelope, including startup failures,
 migrations, TLS reload and shutdown. Version/channel/standards/environment
 labels permit only 1–128 ASCII letters, digits, dots, underscores and hyphens.
 Normal logging is the default. `RUST_LOG` does not enable dependency dumps.
-Local logs remain available when telemetry export is disabled; the exporter
-itself is not implemented by this foundation.
+Local logs and real OpenTelemetry contexts remain available when telemetry
+export is disabled. This server does not configure a native OTLP exporter;
+`NDS_TELEMETRY_ENABLED` is operator intent, not a delivery receipt.
 
 Each emitted record carries a per-process `producer.instance_id` and ordered
-`producer.sequence` assigned under the stdout write lock. Filtered events do not
+`producer.sequence` assigned under the SDK sink lock. Filtered events do not
 consume sequence numbers. The optional pair is omitted after the exact JSON
 integer limit instead of wrapping. Gaps can expose discontinuity; they do not
 alone prove an exact dropped-event count.
+
+The SDK accepts only owned targets and canonical schema fields, with a 16 KiB
+record limit. Its stdout queue holds at most 128 events; saturation drops events
+without blocking request execution. SDK counters and periodic process heartbeats
+report local loss when the sink can write again. Shutdown waits at most one
+second for the output worker; a blocked sink may leave output incomplete. Neither
+an accepted queue entry nor process exit proves external delivery. This bounded
+queue replaces the former synchronous server formatter.
 
 For a diagnostic window, explicitly set `NDS_LOG_MODE=debug`,
 `NDS_DEBUG_SCOPE=http|transport|database`, and `NDS_DEBUG_SECONDS=1..900`.

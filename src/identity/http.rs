@@ -56,7 +56,7 @@ impl IntoResponse for ApiError {
                 dto::ErrorEnum::DependencyUnavailable,
             ),
         };
-        tracing::warn!(event.name="identity.request.rejected",error.type=%self.0,outcome="rejected");
+        tracing::warn!(module = "identity", scope = "http", event.name="identity.request.rejected",error.type=%self.0,outcome="rejected");
         let mut response = (status, Json(dto::Error { error })).into_response();
         if matches!(
             status,
@@ -136,6 +136,8 @@ fn session_dto(session: Session) -> Result<dto::Session, ApiError> {
 }
 fn issued(value: IssuedSession) -> Result<Json<dto::SessionIssued>, ApiError> {
     tracing::info!(
+        module = "identity",
+        scope = "http",
         event.name = "identity.session.issued",
         auth_method = match value.session.method {
             AuthMethod::EmailOtp => "email_otp",
@@ -180,6 +182,8 @@ async fn email_challenge(
         .request_email(&body.email, &peer(source)?, locale(&headers), now_ms()?)
         .await?;
     tracing::info!(
+        module = "identity",
+        scope = "http",
         event.name = "identity.email.requested",
         outcome = "accepted"
     );
@@ -212,7 +216,12 @@ async fn github_start(
     let start = service(&state)?
         .start_github(&peer(source)?, locale(&headers), now_ms()?)
         .await?;
-    tracing::info!(event.name = "identity.github.started", outcome = "pending");
+    tracing::info!(
+        module = "identity",
+        scope = "http",
+        event.name = "identity.github.started",
+        outcome = "pending"
+    );
     Ok(Json(dto::GithubStart {
         flow_id: start.flow_id,
         authorization_url: start.authorization_url,
@@ -341,13 +350,20 @@ async fn github_callback(
     {
         GithubCallback::Approval(approval) => {
             tracing::info!(
+                module = "identity",
+                scope = "http",
                 event.name = "identity.github.awaiting_approval",
                 outcome = "pending"
             );
             approval_page(approval)
         }
         GithubCallback::Complete(locale) => {
-            tracing::info!(event.name = "identity.github.denied", outcome = "rejected");
+            tracing::info!(
+                module = "identity",
+                scope = "http",
+                event.name = "identity.github.denied",
+                outcome = "rejected"
+            );
             Ok(completed_page(locale))
         }
     }
@@ -400,6 +416,8 @@ async fn github_approve(
         )
         .await?;
     tracing::info!(
+        module = "identity",
+        scope = "http",
         event.name = "identity.github.browser_decision",
         outcome = if permit { "approved" } else { "denied" }
     );
@@ -452,7 +470,12 @@ async fn revoke(State(state): State<AppState>, headers: HeaderMap) -> Result<Sta
     service(&state)?
         .revoke(bearer(&headers)?, now_ms()?)
         .await?;
-    tracing::info!(event.name = "identity.session.revoked", outcome = "ok");
+    tracing::info!(
+        module = "identity",
+        scope = "http",
+        event.name = "identity.session.revoked",
+        outcome = "ok"
+    );
     Ok(StatusCode::NO_CONTENT)
 }
 

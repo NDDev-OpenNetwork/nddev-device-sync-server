@@ -6,6 +6,8 @@ pub mod identity;
 pub mod logging;
 pub mod protocol_devices;
 pub mod protocol_v2;
+#[cfg(test)]
+mod telemetry_test;
 pub mod transport;
 
 use std::{
@@ -23,11 +25,17 @@ use axum::{
 };
 use database::DATABASE_TIMEOUT;
 use nddev_device_sync_application::builtin_modules;
+use opentelemetry::{
+    Context,
+    propagation::{Extractor, TextMapPropagator},
+    trace::TraceContextExt,
+};
+use opentelemetry_sdk::propagation::TraceContextPropagator;
 use serde::Serialize;
 use sqlx::PgPool;
 use tokio::sync::Semaphore;
-use tracing::{Instrument, info_span};
-use uuid::Uuid;
+use tracing::Instrument;
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use config::ServerConfig;
 
@@ -147,14 +155,6 @@ pub fn router(state: AppState) -> Router {
 }
 
 async fn request_trace(State(state): State<AppState>, request: Request, next: Next) -> Response {
-    let trace_id = request
-        .headers()
-        .get("traceparent")
-        .and_then(|value| value.to_str().ok())
-        .and_then(valid_trace_id)
-        .map(str::to_owned)
-        .unwrap_or_else(|| Uuid::new_v4().simple().to_string());
-    let span_id = Uuid::new_v4().simple().to_string()[..16].to_owned();
     let route = request
         .extensions()
         .get::<MatchedPath>()
@@ -165,13 +165,23 @@ async fn request_trace(State(state): State<AppState>, request: Request, next: Ne
         | "TRACE") => method,
         _ => "OTHER",
     };
-    let span = info_span!(
-        "http.request",
-        trace_id = %trace_id,
-        span_id = %span_id,
-        method,
-        route
-    );
+    let span = nddev_device_sync_telemetry::http_server_span(method, route)
+        .expect("compiled route and normalized method");
+    // Start from an empty context so malformed/missing headers cannot inherit a
+    // different request's ambient parent. Parsing is owned by the W3C propagator.
+    let parent = TraceContextPropagator::new()
+        .extract_with_context(&Context::new(), &Headers(request.headers()));
+    if span.set_parent(parent).is_err() {
+        tracing::error!(module = "http", scope = "http", event.name = "http.context.unavailable", error.type = "trace_context", outcome = "error");
+        return (
+            StatusCode::SERVICE_UNAVAILABLE,
+            [(axum::http::header::CACHE_CONTROL, "no-store")],
+            Json(serde_json::json!({"error": "server_busy"})),
+        )
+            .into_response();
+    }
+    let context = nddev_device_sync_telemetry::trace_context(&span);
+    let trace_id = context.span().span_context().trace_id().to_string();
     let started = Instant::now();
     let mut response = async {
         let permit = state.requests.try_acquire();
@@ -195,6 +205,9 @@ async fn request_trace(State(state): State<AppState>, request: Request, next: Ne
             )
                 .into_response()
         };
+        if nddev_device_sync_telemetry::finish_http_server_span(&tracing::Span::current(), response.status().as_u16()).is_err() {
+            tracing::error!(module = "http", scope = "http", event.name = "http.context.unavailable", error.type = "trace_context", outcome = "error");
+        }
         if response.status().is_server_error() {
             tracing::error!(
                 event.name = "http.request.completed",
@@ -230,31 +243,21 @@ async fn request_trace(State(state): State<AppState>, request: Request, next: Ne
     response
 }
 
-fn valid_trace_id(value: &str) -> Option<&str> {
-    let mut parts = value.split('-');
-    let version = parts.next()?;
-    let trace_id = parts.next()?;
-    let parent_id = parts.next()?;
-    let flags = parts.next()?;
-    if version != "00"
-        || parts.next().is_some()
-        || trace_id.len() != 32
-        || parent_id.len() != 16
-        || flags.len() != 2
-    {
-        return None;
+struct Headers<'a>(&'a axum::http::HeaderMap);
+impl Extractor for Headers<'_> {
+    fn get(&self, key: &str) -> Option<&str> {
+        let mut values = self.0.get_all(key).iter();
+        let value = values.next()?;
+        // Keep future-version/tracestate parsing bounded independently of the
+        // HTTP driver's larger header budget. No value is retained or logged.
+        if values.next().is_some() || value.as_bytes().len() > 512 {
+            return None;
+        }
+        value.to_str().ok()
     }
-    let lowercase_hex = |c: u8| c.is_ascii_digit() || (b'a'..=b'f').contains(&c);
-    if !flags.bytes().all(lowercase_hex) {
-        return None;
+    fn keys(&self) -> Vec<&str> {
+        self.0.keys().map(|key| key.as_str()).collect()
     }
-    if !trace_id.bytes().all(lowercase_hex) || trace_id.bytes().all(|c| c == b'0') {
-        return None;
-    }
-    if !parent_id.bytes().all(lowercase_hex) || parent_id.bytes().all(|c| c == b'0') {
-        return None;
-    }
-    Some(trace_id)
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -325,9 +328,11 @@ mod tests {
     use axum::body::Body;
     use http_body_util::BodyExt;
     use tower::ServiceExt;
+    use tracing::instrument::WithSubscriber;
 
     #[tokio::test]
     async fn health_exposes_pinned_product_state() {
+        let (dispatch, _provider, _captured) = crate::telemetry_test::capture();
         let response = router(AppState::test())
             .oneshot(
                 Request::builder()
@@ -339,6 +344,7 @@ mod tests {
                     .body(Body::empty())
                     .unwrap(),
             )
+            .with_subscriber(dispatch.clone())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -351,42 +357,37 @@ mod tests {
         assert_eq!(value["status"], "ok");
         assert_eq!(value["channel"], "alpha");
         assert_eq!(value["telemetry_enabled"], true);
+        let spans = _captured.0.lock().unwrap();
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].span_kind, opentelemetry::trace::SpanKind::Server);
+        assert_eq!(spans[0].parent_span_id.to_string(), "0123456789abcdef");
+        assert!(spans[0].parent_span_is_remote);
+        assert_eq!(
+            spans[0].span_context.trace_id().to_string(),
+            "0123456789abcdef0123456789abcdef"
+        );
     }
 
     #[tokio::test]
     async fn readiness_is_honest_without_database() {
+        let (dispatch, _provider, _captured) = crate::telemetry_test::capture();
         let response = router(AppState::test())
             .oneshot(Request::get("/v1/ready").body(Body::empty()).unwrap())
+            .with_subscriber(dispatch.clone())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
-    }
-
-    #[test]
-    fn rejects_invalid_trace_context() {
-        assert!(
-            valid_trace_id("00-0123456789abcdef0123456789abcdef-0123456789abcdef-01").is_some()
-        );
-        assert!(
-            valid_trace_id("00-00000000000000000000000000000000-0123456789abcdef-01").is_none()
-        );
-        assert!(
-            valid_trace_id("ff-0123456789abcdef0123456789abcdef-0123456789abcdef-01").is_none()
-        );
-        for invalid in [
-            "00-0123456789abcdef0123456789abcdef-0123456789abcdef-zz",
-            "00-0123456789abcdef0123456789abcdef-0123456789abcdef-FF",
-            "00-0123456789ABCDEF0123456789abcdef-0123456789abcdef-01",
-            "00-0123456789abcdef0123456789abcdef-0123456789ABCDEF-01",
-            "00-0123456789abcdef0123456789abcdef-0000000000000000-01",
-            "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01-extra",
-        ] {
-            assert!(valid_trace_id(invalid).is_none(), "accepted {invalid}");
-        }
+        let spans = _captured.0.lock().unwrap();
+        assert_eq!(spans.len(), 1);
+        assert!(matches!(
+            spans[0].status,
+            opentelemetry::trace::Status::Error { .. }
+        ));
     }
 
     #[tokio::test(start_paused = true)]
     async fn slow_handler_is_cancelled_with_a_correlated_timeout() {
+        let (dispatch, _provider, _captured) = crate::telemetry_test::capture();
         let state = AppState::test();
         let app = Router::new()
             .route(
@@ -399,6 +400,7 @@ mod tests {
             .layer(middleware::from_fn_with_state(state, request_trace));
         let response = app
             .oneshot(Request::get("/slow").body(Body::empty()).unwrap())
+            .with_subscriber(dispatch.clone())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
@@ -416,6 +418,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_flags_do_not_control_response_correlation() {
+        let (dispatch, _provider, _captured) = crate::telemetry_test::capture();
         let response = router(AppState::test())
             .oneshot(
                 Request::get("/v1/health")
@@ -426,6 +429,7 @@ mod tests {
                     .body(Body::empty())
                     .unwrap(),
             )
+            .with_subscriber(dispatch.clone())
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::OK);
@@ -437,6 +441,7 @@ mod tests {
 
     #[tokio::test]
     async fn success_and_error_responses_disable_http_storage() {
+        let (dispatch, _provider, _captured) = crate::telemetry_test::capture();
         for (path, status) in [
             ("/v1/health", StatusCode::OK),
             ("/source", StatusCode::OK),
@@ -445,10 +450,119 @@ mod tests {
         ] {
             let response = router(AppState::test())
                 .oneshot(Request::get(path).body(Body::empty()).unwrap())
+                .with_subscriber(dispatch.clone())
                 .await
                 .unwrap();
             assert_eq!(response.status(), status);
             assert_eq!(response.headers()["cache-control"], "no-store", "{path}");
         }
+    }
+    #[tokio::test]
+    async fn native_propagation_preserves_valid_parents_and_replaces_invalid_headers() {
+        let (dispatch, _provider, _captured) = crate::telemetry_test::capture();
+        let trace = "0123456789abcdef0123456789abcdef";
+        for (header, valid) in [
+            (
+                "00-0123456789abcdef0123456789abcdef-0123456789abcdef-00",
+                true,
+            ),
+            (
+                "00-0123456789abcdef0123456789abcdef-0123456789abcdef-02",
+                true,
+            ),
+            (
+                "01-0123456789abcdef0123456789abcdef-0123456789abcdef-01-extra",
+                true,
+            ),
+            (
+                "00-00000000000000000000000000000000-0123456789abcdef-01",
+                false,
+            ),
+            (
+                "ff-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+                false,
+            ),
+            (
+                "00-0123456789abcdef0123456789abcdef-0123456789abcdef-zz",
+                false,
+            ),
+            (
+                "00-0123456789abcdef0123456789abcdef-0123456789abcdef-FF",
+                false,
+            ),
+            (
+                "00-0123456789ABCDEF0123456789abcdef-0123456789abcdef-01",
+                false,
+            ),
+            (
+                "00-0123456789abcdef0123456789abcdef-0123456789ABCDEF-01",
+                false,
+            ),
+            (
+                "00-0123456789abcdef0123456789abcdef-0000000000000000-01",
+                false,
+            ),
+            (
+                "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01-extra",
+                false,
+            ),
+        ] {
+            let response = router(AppState::test())
+                .oneshot(
+                    Request::get("/v1/health")
+                        .header("traceparent", header)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .with_subscriber(dispatch.clone())
+                .await
+                .unwrap();
+            let observed = response.headers()["x-request-id"].to_str().unwrap();
+            assert_eq!(
+                observed == trace,
+                valid,
+                "propagator accepted/rejected {header}"
+            );
+            assert_ne!(observed, "00000000000000000000000000000000");
+            assert_eq!(observed.len(), 32);
+        }
+        let oversized = format!("01-{trace}-0123456789abcdef-01-{}", "a".repeat(512));
+        let response = router(AppState::test())
+            .oneshot(
+                Request::get("/v1/health")
+                    .header("traceparent", oversized)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .with_subscriber(dispatch.clone())
+            .await
+            .unwrap();
+        assert_ne!(
+            response.headers()["x-request-id"],
+            trace,
+            "oversized context header"
+        );
+        let response = router(AppState::test())
+            .oneshot(
+                Request::get("/v1/health")
+                    .header(
+                        "traceparent",
+                        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+                    )
+                    .header(
+                        "traceparent",
+                        "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .with_subscriber(dispatch)
+            .await
+            .unwrap();
+        assert_ne!(
+            response.headers()["x-request-id"],
+            trace,
+            "ambiguous repeated header"
+        );
     }
 }

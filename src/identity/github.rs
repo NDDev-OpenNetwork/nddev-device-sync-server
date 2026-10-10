@@ -80,6 +80,8 @@ impl Github {
         let ready = Arc::new(AtomicBool::new(probe(&client).await));
         let last_probe = Arc::new(AtomicU64::new(super::now_ms()?));
         tracing::info!(
+            module = "identity",
+            scope = "http",
             event.name = "github.provider.checked",
             available = ready.load(Ordering::Relaxed),
             credentials_verified = false,
@@ -97,6 +99,8 @@ impl Github {
                 worker_time.store(super::now_ms().unwrap_or(0), Ordering::Relaxed);
                 if worker_ready.swap(available, Ordering::Relaxed) != available {
                     tracing::info!(
+                        module = "identity",
+                        scope = "http",
                         event.name = "github.provider.changed",
                         available,
                         outcome = if available { "ready" } else { "unavailable" }
@@ -109,6 +113,8 @@ impl Github {
                     backoff_seconds = (backoff_seconds * 2).min(300);
                     failed_probes = failed_probes.saturating_add(1);
                     tracing::warn!(
+                        module = "identity",
+                        scope = "http",
                         event.name = "github.provider.unavailable",
                         retry_count = failed_probes,
                         backoff_seconds,
