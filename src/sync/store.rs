@@ -116,9 +116,11 @@ impl SyncStore for Store {
                     }
                     return Ok(StoredResult {status:receipt.try_get::<i16,_>("status").map_err(unavailable)?.try_into().map_err(unavailable)?,body:receipt.try_get("result_body").map_err(unavailable)?});
                 }
-                let counters=sqlx::query("SELECT server_seq,operation_count,stored_bytes FROM nds_sync_counters WHERE user_id=$1 AND tenant_id=$2 FOR UPDATE")
+                let counters=sqlx::query("SELECT server_seq,operation_count,stored_bytes,root_key_id FROM nds_sync_counters WHERE user_id=$1 AND tenant_id=$2 FOR UPDATE")
                     .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).fetch_one(&mut *tx).await.map_err(unavailable)?;
                 let seq=counter(counters.try_get("server_seq").map_err(unavailable)?)?.checked_add(1).filter(|value|*value<=MAX_REVISION).ok_or(SyncError::Revision)?;
+                let root:Option<String>=counters.try_get("root_key_id").map_err(unavailable)?;
+                if root.is_some_and(|root|root!=operation.payload.key_id) {return Err(SyncError::KeyConflict);}
                 let count=counter(counters.try_get("operation_count").map_err(unavailable)?)?;
                 let retained=counter(counters.try_get("stored_bytes").map_err(unavailable)?)?;
                 let current:Option<i64>=sqlx::query_scalar("SELECT revision FROM nds_sync_entities WHERE user_id=$1 AND tenant_id=$2 AND entity_type=$3 AND entity_id=$4 FOR UPDATE")
@@ -143,8 +145,8 @@ impl SyncStore for Store {
                 }
                 sqlx::query("INSERT INTO nds_sync_operations(user_id,tenant_id,device_id,operation_id,idempotency_key,fingerprint,server_seq,request_body,result_body,status) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)")
                     .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).bind(signed.device.as_str()).bind(&operation.id).bind(&operation.idempotency_key).bind(signed.fingerprint.as_slice()).bind(integer(seq)?).bind(&body).bind(&result).bind(status as i16).execute(&mut *tx).await.map_err(unavailable)?;
-                sqlx::query("UPDATE nds_sync_counters SET server_seq=$3,operation_count=operation_count+1,stored_bytes=stored_bytes+$4 WHERE user_id=$1 AND tenant_id=$2")
-                    .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).bind(integer(seq)?).bind(integer(cost)?).execute(&mut *tx).await.map_err(unavailable)?;
+                sqlx::query("UPDATE nds_sync_counters SET server_seq=$3,operation_count=operation_count+1,stored_bytes=stored_bytes+$4,root_key_id=COALESCE(root_key_id,$5) WHERE user_id=$1 AND tenant_id=$2")
+                    .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).bind(integer(seq)?).bind(integer(cost)?).bind(&operation.payload.key_id).execute(&mut *tx).await.map_err(unavailable)?;
                 Ok(StoredResult{status,body:result})
             }.await;
             finish(tx,outcome).await

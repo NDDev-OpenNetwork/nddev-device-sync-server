@@ -65,6 +65,11 @@ def check_sync(request, token, restart, directory, sql, origin):
     original=outcomes[0]
     assert json.loads(original[1])=={'outcome':'applied','operation_id':value['operation_id'],'revision':1,'server_seq':1}
     assert sql('SELECT count(*) FROM nds_sync_operations').stdout.strip()=='1'
+    competing=operation(id2);competing['payload']['key_id']='different-vault-key'
+    status,blocked=send(second,id2,'/v2/sync/operations',json.dumps(competing,separators=(',',':')).encode())
+    assert status==409 and json.loads(blocked)=={'error':'operation_conflict'}
+    assert sql('SELECT root_key_id FROM nds_sync_counters').stdout.strip()=='acceptance-key'
+    assert sql('SELECT server_seq FROM nds_sync_counters').stdout.strip()=='1'
     # Same logical JSON with changed exact bytes cannot reuse a receipt.
     assert send(first,id1,'/v2/sync/operations',json.dumps(value,indent=1).encode())[0]==409
     nonce=b64(secrets.token_bytes(24))

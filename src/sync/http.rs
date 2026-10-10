@@ -28,7 +28,10 @@ impl IntoResponse for ApiError {
             SyncError::Denied => StatusCode::UNAUTHORIZED,
             SyncError::Revoked => StatusCode::FORBIDDEN,
             SyncError::Signature => StatusCode::BAD_REQUEST,
-            SyncError::Nonce | SyncError::Idempotency | SyncError::Revision => StatusCode::CONFLICT,
+            SyncError::Nonce
+            | SyncError::Idempotency
+            | SyncError::Revision
+            | SyncError::KeyConflict => StatusCode::CONFLICT,
             SyncError::Capacity | SyncError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };
         tracing::warn!(module="sync",scope="http",event.name="sync.request.rejected",error.type=%self.0,outcome="rejected");
