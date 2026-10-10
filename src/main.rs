@@ -10,18 +10,22 @@ use nddev_device_sync_server::{
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let _logging = match init_logging() {
+    let logging = match init_logging() {
         Ok(guard) => guard,
         Err(error) => {
             tracing::error!(event.name = "process.failed", module = "process", error.type = %error, outcome = "error");
             return ExitCode::FAILURE;
         }
     };
+    if let Err(error) = logging.validate() {
+        tracing::error!(event.name = "process.failed", module = "process", error.type = %error, outcome = "error");
+        return ExitCode::FAILURE;
+    }
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             // Adapter errors expose stable classes, never driver messages, paths or URLs.
-            tracing::error!(event.name = "process.failed", module = "process", error.type = %error, outcome = "error");
+            tracing::error!(event.name = "process.failed", module = "process", error.type = process_error_class(error.as_ref()), outcome = "error");
             ExitCode::FAILURE
         }
     }
@@ -47,4 +51,40 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         _ => return Err("invalid command; use --help".into()),
     }
     Ok(())
+}
+
+fn process_error_class(error: &(dyn std::error::Error + 'static)) -> &'static str {
+    use nddev_device_sync_server::{
+        config::ConfigError, database::DatabaseError, transport::TransportError,
+    };
+    if let Some(error) = error.downcast_ref::<ConfigError>() {
+        return match error {
+            ConfigError::Address => "configuration_address",
+            ConfigError::TlsPair => "configuration_tls_pair",
+            ConfigError::ConflictingSecret => "configuration_secret_conflict",
+            ConfigError::SecretFile => "configuration_secret_file",
+            ConfigError::SecretValue => "configuration_secret_value",
+            ConfigError::MigrationDatabaseMissing => "configuration_migration_database_missing",
+            ConfigError::AdmissionLimit => "configuration_admission_limit",
+            ConfigError::Identity => "configuration_identity",
+            ConfigError::IdentityHttpsRequired => "configuration_identity_https_required",
+        };
+    }
+    if let Some(error) = error.downcast_ref::<DatabaseError>() {
+        return match error {
+            DatabaseError::Connection => "database_connection",
+            DatabaseError::RuntimeRole => "database_runtime_role",
+            DatabaseError::Migration => "database_migration",
+            DatabaseError::MigrationTimeout => "database_migration_timeout",
+            DatabaseError::Identity => "database_identity",
+        };
+    }
+    if let Some(error) = error.downcast_ref::<TransportError>() {
+        return match error {
+            TransportError::TlsConfiguration => "transport_tls_configuration",
+            TransportError::Listener => "transport_listener",
+            TransportError::Signal => "transport_signal",
+        };
+    }
+    "invalid_command"
 }

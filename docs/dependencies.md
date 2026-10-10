@@ -17,6 +17,9 @@ cargo-audit. All licenses below are compatible with this AGPL-3.0-only server.
 | subtle 2.6 | Constant-time comparison of fixed-size protected verifiers | BSD-3-Clause | The shared crypto provider exposes the same reviewed operation |
 | base64 0.22 | Canonical RFC 4648 unpadded base64url credentials and PKCE encoding | MIT OR Apache-2.0 | An existing owned codec provides the same format |
 | time 0.3 | Checked RFC 3339 session expiry output; already present in the locked graph | MIT OR Apache-2.0 | An existing owned date-time adapter covers this wire contract |
+| nddev-device-sync-telemetry (immutable Git rev) | Canonical event validation, privacy, producer sequencing, bounded output and debug policy | AGPL-3.0-only | The shared telemetry owner replaces its supported SDK |
+| opentelemetry / opentelemetry_sdk 0.33 | Real span context, native W3C propagation and caller-owned test provider | Apache-2.0 | The shared SDK exposes equivalent transport APIs |
+| tracing-opentelemetry 0.34 | Bind validated remote parents to SDK spans | MIT | The shared SDK exposes equivalent parent binding |
 | rcgen 0.14 (tests) | Ephemeral test certificates; no private-key fixtures in Git | MIT OR Apache-2.0 | TLS integration tests move to another reviewed fixture generator |
 | tokio-rustls 0.26 (tests) | Verify real encrypted handshakes and presented certificate changes | MIT OR Apache-2.0 | Equivalent TLS client is already present for another test need |
 
@@ -45,7 +48,8 @@ HTTPS readiness probe). Publish and consume that built image by digest; a source
 build with current apt packages is not a bit-for-bit reproducible release.
 
 `deny.toml` records the reviewed compatible licenses actually present in the
-locked graph and restricts Git dependencies to the pinned core repository.
+locked graph and restricts Git dependencies to the pinned core and observability
+repositories.
 It does not change the product license or waive advisory findings. The added
 TLS runtime crates use MIT/Apache/ISC; rcgen-generated test material remains
 local and ephemeral.
@@ -55,3 +59,8 @@ The new SMTP graph includes `quoted_printable` under
 as a permissive dependency license and explicitly added to `deny.toml`;
 the application remains AGPL-3.0-only. Dependency updates require the real
 PostgreSQL/SMTP lifecycle checks and the provider/crypto boundary tests.
+
+The shared SDK's schema validator adds `borrow-or-share` under MIT No
+Attribution (`MIT-0`). The packaged license permits use, modification and
+distribution without an attribution condition; it is explicitly allowlisted
+after review, without changing the server's AGPL-3.0-only license.

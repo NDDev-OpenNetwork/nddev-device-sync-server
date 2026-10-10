@@ -55,6 +55,8 @@ async fn read_pem(path: &Path, max_bytes: u64) -> Result<Vec<u8>, TransportError
 
 pub async fn load_tls(files: &TlsFiles) -> Result<RustlsConfig, TransportError> {
     tracing::debug!(
+        module = "transport",
+        scope = "transport",
         event.name = "tls.configuration.loading",
         outcome = "started"
     );
@@ -159,8 +161,8 @@ pub async fn serve(config: &ServerConfig, app: Router) -> Result<(), TransportEr
                 _ = reload_signal => {
                     if let (Some(tls), Some(files)) = (&tls, &config.tls) {
                         match reload_tls(tls, files).await {
-                            Ok(()) => tracing::info!(event.name = "tls.reload.completed", outcome = "ok"),
-                            Err(_) => tracing::error!(event.name = "tls.reload.failed", error.type = "tls_configuration", outcome = "error"),
+                            Ok(()) => tracing::info!(module = "transport", scope = "transport", event.name = "tls.reload.completed", outcome = "ok"),
+                            Err(_) => tracing::error!(module = "transport", scope = "transport", event.name = "tls.reload.failed", error.type = "tls_configuration", outcome = "error"),
                         }
                     }
                 }
@@ -168,7 +170,7 @@ pub async fn serve(config: &ServerConfig, app: Router) -> Result<(), TransportEr
         }
         Ok::<(), TransportError>(())
     };
-    tracing::info!(event.name = "server.started", address = %address, transport = if tls.is_some() { "https" } else { "http" }, outcome = "ok");
+    tracing::info!(module = "transport", scope = "transport", event.name = "server.started", address = %address, transport = if tls.is_some() { "https" } else { "http" }, outcome = "ok");
     let server = serve_listener(
         listener,
         app,
@@ -180,10 +182,10 @@ pub async fn serve(config: &ServerConfig, app: Router) -> Result<(), TransportEr
     tokio::select! {
         result = &mut server => result,
         control_result = control => {
-            tracing::info!(event.name = "server.shutdown.started", deadline_seconds = SHUTDOWN_TIMEOUT.as_secs());
+            tracing::info!(module = "transport", scope = "transport", event.name = "server.shutdown.started", deadline_seconds = SHUTDOWN_TIMEOUT.as_secs());
             handle.graceful_shutdown(Some(SHUTDOWN_TIMEOUT));
             let result = server.await;
-            tracing::info!(event.name = "server.shutdown.completed", outcome = if result.is_ok() { "ok" } else { "error" });
+            tracing::info!(module = "transport", scope = "transport", event.name = "server.shutdown.completed", outcome = if result.is_ok() { "ok" } else { "error" });
             control_result.and(result)
         }
     }

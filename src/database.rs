@@ -42,6 +42,8 @@ async fn connect(url: &SecretString, max_connections: u32) -> Result<PgPool, Dat
     .map_err(|_| DatabaseError::Connection);
     if result.is_ok() {
         tracing::debug!(
+            module = "database",
+            scope = "database",
             event.name = "database.connection.opened",
             max_connections,
             outcome = "ok"
@@ -65,6 +67,8 @@ pub async fn connect_runtime(url: &SecretString) -> Result<PgPool, DatabaseError
 pub async fn migrate(url: &SecretString) -> Result<(), DatabaseError> {
     let started = std::time::Instant::now();
     tracing::info!(
+        module = "database",
+        scope = "database",
         event.name = "database.migration.started",
         outcome = "started"
     );
@@ -77,6 +81,8 @@ pub async fn migrate(url: &SecretString) -> Result<(), DatabaseError> {
     pool.close().await;
     if result.is_ok() {
         tracing::info!(
+            module = "database",
+            scope = "database",
             event.name = "database.migration.completed",
             migration.version = REQUIRED_SCHEMA_VERSION,
             duration_ms = started.elapsed().as_secs_f64() * 1000.0,

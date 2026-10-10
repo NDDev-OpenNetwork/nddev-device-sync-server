@@ -57,6 +57,8 @@ pub async fn initialize(
     );
     let methods = service.methods();
     tracing::info!(
+        module = "identity",
+        scope = "http",
         event.name = "identity.initialized",
         email_available = methods.0,
         github_available = methods.1,
