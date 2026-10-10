@@ -37,6 +37,11 @@ creates `nds_migrator` (schema owner) and `nds_runtime`. The baseline grants
 metadata reads; the identity migration grants bootstrap-owner insertion,
 challenge/rate-state mutations and session insertion/deletion. Runtime cannot
 reassign the owner, modify the SQLx ledger or create schema objects.
+Enrollment adds device insertion/status updates and bounded challenge state.
+Session writers, revocation, observed expiry and enrollment authorization share
+one bounded PostgreSQL advisory transaction lock. Runtime has no session UPDATE
+grant and cannot extend expiry or alter a stored session binding.
+Device rows have no runtime DELETE grant, preserving revoked identities.
 Administrative access stays with PostgreSQL; observability credentials are not
 provisioned until the observability service exists.
 
@@ -84,8 +89,8 @@ a local `NDS_IMAGE` tag, a full `NDS_SOURCE_COMMIT`, and run `docker compose bui
 Release deployments must instead consume the reviewed built image by digest.
 
 The server exposes `/v1/health`, `/v1/ready`, `/source` and the implemented v2
-identity routes, with request IDs and `Cache-Control: no-store`. Identity is
-unavailable until configured privately. `/v1/ready` requires schema version 2;
+identity/device routes, with request IDs and `Cache-Control: no-store`. Identity is
+unavailable until configured privately. `/v1/ready` requires schema version 3;
 use the explicit migrator before starting the updated runtime. The observability
 pipeline remains a separate slice.
 
@@ -151,6 +156,32 @@ checks, sixty-second refresh and failure backoff capped at five minutes.
 Stale readiness becomes unavailable. GitHub readiness is not evidence of a
 successful credential/owner exchange; prove that with an actual sign-in.
 Authentication requires HTTPS unless the HTTP listener is loopback-only.
+
+## Device identity
+
+An authenticated owner requests `/v2/devices/challenges` with platform, display
+name and the per-installation public Ed25519 key. Native secure storage owns the
+private key. The server rejects malformed, noncanonical, weak and non-prime-order
+public keys before allocating a challenge. Proof signs the exact protocol
+domain prefix and decoded 32-byte challenge; `/v2/devices/enrollments` requires
+the same initiating session, rechecked and locked inside the database transaction.
+A challenge lasts at most five minutes and no longer than that session, allows
+five attempts and is consumed once. Expired or exhausted proof cannot revive.
+
+Personal alpha bounds are eight pending challenges, 32 active devices and 128
+retained device identities per owner. Source limits allow ten starts per fifteen
+minutes and use the socket IP. Terminal challenge rows are discarded on new
+enrollment activity. Device rows persist: revocation is terminal for that public
+key, and retained-identity exhaustion fails closed until a separately reviewed
+lifecycle change exists. No automatic pruning or key rotation is implemented.
+
+GET `/v2/devices` returns owned devices including revoked ones and an opaque
+cursor. The requested limit is 1–100; each response contains at most 32 items
+to bound encoded size even for maximal Unicode names. DELETE
+`/v2/devices/{device_id}` is idempotent for an owned device and retains its row.
+If a completion response is uncertain, retain the local key and inspect the
+owned device list. Enrollment does not supply vault decryption keys, restore
+secrets or yet authorize a sync endpoint; signed sync is a separate slice.
 
 ## Certificate renewal and shutdown
 

@@ -1,10 +1,10 @@
 pub mod config;
-mod crypto;
+pub(crate) mod crypto;
 mod email;
 mod flows;
 mod github;
 pub mod http;
-mod store;
+pub(crate) mod store;
 
 use config::AuthConfig;
 use nddev_device_sync_application::identity::{

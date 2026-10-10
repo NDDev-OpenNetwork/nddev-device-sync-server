@@ -13,6 +13,7 @@ cargo-audit. All licenses below are compatible with this AGPL-3.0-only server.
 | lettre 0.11 | Maintained SMTP/TLS transport and safe MIME encoding; no pool or alternate HTTP mail adapter | MIT | An existing owned email adapter provides equivalent verified delivery |
 | reqwest 0.13 | Fixed-endpoint GitHub HTTPS exchange, redirects disabled and response/time bounds | MIT OR Apache-2.0 | Another owned HTTP adapter covers the same provider contract |
 | ring 0.17 | OS randomness, HMAC-SHA256 protected verifiers and standard PKCE digest; already used by TLS | Apache-2.0 AND ISC | The reviewed shared crypto provider changes |
+| ed25519-dalek 3.0 | Canonical non-weak prime-order device keys and strict Ed25519 proof verification, with default/legacy features disabled | BSD-3-Clause | The shared reviewed crypto provider supplies the same strict key and signature validation |
 | subtle 2.6 | Constant-time comparison of fixed-size protected verifiers | BSD-3-Clause | The shared crypto provider exposes the same reviewed operation |
 | base64 0.22 | Canonical RFC 4648 unpadded base64url credentials and PKCE encoding | MIT OR Apache-2.0 | An existing owned codec provides the same format |
 | time 0.3 | Checked RFC 3339 session expiry output; already present in the locked graph | MIT OR Apache-2.0 | An existing owned date-time adapter covers this wire contract |
@@ -26,6 +27,15 @@ and [lettre SMTP APIs](https://docs.rs/lettre/0.11.23/lettre/transport/smtp/stru
 For Resend, [its SMTP contract](https://resend.com/docs/send-with-smtp) includes
 implicit TLS on 2465. Provider reachability and isolated Mailpit acceptance do
 not substitute for actual external mailbox or GitHub owner sign-in evidence.
+
+Device keys use [ed25519-dalek's strict verification and weak-key check](https://docs.rs/ed25519-dalek/3.0.0/ed25519_dalek/struct.VerifyingKey.html).
+The maintained curve implementation also checks prime-order membership and
+canonical point encoding before a challenge is allocated. A generic Ed25519
+verification primitive alone is insufficient for registering untrusted public
+keys. Regression checks include identity/small-order and mixed-order keys,
+noncanonical encodings, S+L malleability and an independent signer. OpenSSL is
+used only by the isolated acceptance runner to generate ephemeral test keys;
+the runtime never receives a private device key.
 
 Container bases use official-image manifest-list digests verified through the
 Docker registry on 2026-10-09. Review updates to Rust 1.99, Debian bookworm-slim

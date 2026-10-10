@@ -373,6 +373,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "curve25519-dalek"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b5eed333089e2e1c1ac8c6c0398e5e2497b4c9926ca6d0365ed1e099afa5bc23"
+dependencies = [
+ "cfg-if",
+ "cpufeatures 0.3.1",
+ "curve25519-dalek-derive",
+ "digest 0.11.3",
+ "fiat-crypto",
+ "rustc_version",
+ "subtle",
+]
+
+[[package]]
+name = "curve25519-dalek-derive"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f46882e17999c6cc590af592290432be3bce0428cb0d5f8b6715e4dc7b383eb3"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.119",
+]
+
+[[package]]
 name = "data-encoding"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -435,6 +461,27 @@ name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
+name = "ed25519"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "29fcf32e6c73d1079f83ab4d782de2d81620346a5f38c6237a86a22f8368980a"
+dependencies = [
+ "signature",
+]
+
+[[package]]
+name = "ed25519-dalek"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6ebaa1a2bf1290ab3bfe5a7b771d050ebffab2711c19a81691c683a5144a25de"
+dependencies = [
+ "curve25519-dalek",
+ "ed25519",
+ "sha2 0.11.0",
+ "subtle",
+]
 
 [[package]]
 name = "either"
@@ -502,6 +549,12 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
+
+[[package]]
+name = "fiat-crypto"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "64cd1e32ddd350061ae6edb1b082d7c54915b5c672c389143b9a63403a109f24"
 
 [[package]]
 name = "find-msvc-tools"
@@ -1158,7 +1211,7 @@ dependencies = [
 [[package]]
 name = "nddev-device-sync-application"
 version = "0.0.1"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=9bc379e0a0d921b8478fb2e736d97280ce3dc0aa#9bc379e0a0d921b8478fb2e736d97280ce3dc0aa"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=3513d377dc33ca0fb787319b49c35506d7d5cdf7#3513d377dc33ca0fb787319b49c35506d7d5cdf7"
 dependencies = [
  "nddev-device-sync-domain",
  "thiserror",
@@ -1167,7 +1220,7 @@ dependencies = [
 [[package]]
 name = "nddev-device-sync-domain"
 version = "0.0.1"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=9bc379e0a0d921b8478fb2e736d97280ce3dc0aa#9bc379e0a0d921b8478fb2e736d97280ce3dc0aa"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=3513d377dc33ca0fb787319b49c35506d7d5cdf7#3513d377dc33ca0fb787319b49c35506d7d5cdf7"
 dependencies = [
  "serde",
  "thiserror",
@@ -1180,6 +1233,7 @@ dependencies = [
  "axum",
  "axum-server",
  "base64 0.22.1",
+ "ed25519-dalek",
  "http-body-util",
  "hyper-util",
  "lettre",
@@ -1775,6 +1829,12 @@ dependencies = [
  "errno",
  "libc",
 ]
+
+[[package]]
+name = "signature"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "28d567dcbaf0049cb8ac2608a76cd95ff9e4412e1899d389ee400918ca7537f5"
 
 [[package]]
 name = "simd_cesu8"

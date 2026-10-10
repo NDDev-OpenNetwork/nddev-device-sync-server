@@ -1,0 +1,201 @@
+"""Real HTTP/SQL enrollment with independent OpenSSL Ed25519 signatures."""
+import base64
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from pathlib import Path
+import subprocess
+import time
+import uuid
+
+
+def encoded(value):
+    return base64.urlsafe_b64encode(value).decode().rstrip("=")
+
+
+def literal(value):
+    return "'" + value.replace("'", "''") + "'"
+
+
+def check_enrollment(request, token, second_session, restart, directory, sql):
+    directory = Path(directory) / "enrollment"
+    directory.mkdir(mode=0o700)
+    sensitive = []
+    keys = 0
+
+    def run(*args):
+        return subprocess.run(["openssl", *map(str, args)], check=True, capture_output=True, timeout=5).stdout
+
+    def key():
+        nonlocal keys
+        keys += 1
+        assert keys <= 160, "fixture key budget exceeded"
+        path = directory / f"device-{keys}.pem"
+        run("genpkey", "-algorithm", "ED25519", "-out", path)
+        path.chmod(0o600)
+        sensitive.extend(path.read_text().splitlines()[1:-1])
+        public = run("pkey", "-in", path, "-pubout", "-outform", "DER")
+        # RFC 8410 Ed25519 SubjectPublicKeyInfo, produced by OpenSSL itself.
+        assert len(public) == 44 and public[:12] == bytes.fromhex("302a300506032b6570032100")
+        return path, encoded(public[12:])
+
+    def proof(path, challenge, prefixed=True):
+        value = base64.urlsafe_b64decode(challenge["challenge"] + "=")
+        assert len(value) == 32
+        content = (b"NDS-ENROLLMENT-V2\0" if prefixed else b"") + value
+        payload = directory / "challenge.bin"
+        payload.write_bytes(content)
+        signature = run("pkeyutl", "-sign", "-inkey", path, "-rawin", "-in", payload)
+        assert len(signature) == 64
+        return {"challenge_id": challenge["challenge_id"], "signature": encoded(signature)}
+
+    def challenge(public, session=token, platform="linux", name="🚀"*128):
+        return request("/v2/devices/challenges", {"platform": platform, "display_name": name, "public_key": public}, token=session)
+
+    def enroll(path, public, platform="linux"):
+        status, receipt = challenge(public, platform=platform)
+        assert status == 201, "enrollment challenge failed"
+        expiry = datetime.fromisoformat(receipt["expires_at"].replace("Z", "+00:00"))
+        assert 0 < (expiry - datetime.now(timezone.utc)).total_seconds() <= 300
+        status, device = request("/v2/devices/enrollments", proof(path, receipt), token=token)
+        assert status == 201 and device["device_id"] == receipt["device_id"]
+        assert device["public_key"] == public and device["platform"] == platform and device["status"] == "active"
+        return device
+
+    def wait_sql(statement, expected):
+        deadline = time.monotonic() + 2
+        while time.monotonic() < deadline:
+            if sql(statement).stdout.strip() == str(expected): return
+            time.sleep(0.01)
+        raise AssertionError("bounded enrollment race did not reach its PostgreSQL lock boundary")
+
+    path, public = key()
+    assert request("/v2/devices")[0] == 401
+    assert challenge(public, session=None)[0] == 401
+    for invalid in [encoded(bytes(32)), encoded(b"\x01" + bytes(31)), encoded(bytes([0xee]) + bytes([0xff])*30 + b"\x7f"), public + "=", encoded(bytes(31))]:
+        assert challenge(invalid)[0] == 400
+    assert sql("SELECT count(*) FROM nds_enrollment_challenges").stdout.strip() == "0", "invalid keys allocated pending state"
+    assert request("/v2/devices/challenges", {"platform":"linux", "display_name":"Synthetic", "public_key":public, "user_id":uuid.uuid4().hex}, token=token)[0] == 400
+    status, receipt = challenge(public, name="Тест " + "я"*123)
+    assert status == 201, (status, receipt.get("error"))
+    assert request("/v2/devices/enrollments", proof(path, receipt, prefixed=False), token=token) == (400, {"error":"invalid_signature"})
+    other = second_session()
+    sensitive.append(other)
+    valid = proof(path, receipt)
+    assert request("/v2/devices/enrollments", valid, token=other)[0] == 400, "a different owner session completed enrollment"
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [executor.submit(request, "/v2/devices/enrollments", valid, token=token) for _ in range(2)]
+        results = [future.result(timeout=8) for future in futures]
+    assert sorted(status for status, _ in results) == [201, 400]
+    first = next(value for status,value in results if status == 201)
+    assert sql("SELECT count(*) FROM nds_devices").stdout.strip() == "1"
+    assert request("/v2/devices/enrollments", valid, token=token)[0] == 400
+    restart()
+    assert request("/v2/devices", token=token) == (200, {"devices":[first], "next_cursor":None})
+    assert request("/v2/devices?limit=0", token=token)[0] == 400
+    assert request("/v2/devices?cursor=devices.01", token=token)[0] == 400
+    assert challenge(public)[0] == 400, "active key was registered twice"
+    assert request("/v2/devices/" + first["device_id"], token=token, method="DELETE")[0] == 204
+    assert request("/v2/devices/" + first["device_id"], token=token, method="DELETE")[0] == 204
+    assert challenge(public)[0] == 400, "revoked key was silently reassigned"
+    assert request("/v2/devices", token=token)[1]["devices"][0]["status"] == "revoked"
+    assert sql("DELETE FROM nds_devices WHERE false", "nds_runtime", check=False).returncode != 0
+
+    sql("DELETE FROM nds_auth_limits;")
+    second_path, second_public = key()
+    _, pending = challenge(second_public, session=other)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        blocker = executor.submit(sql, f"BEGIN; SELECT pg_advisory_xact_lock({0x4e44533241555448}); SELECT pg_sleep(2); COMMIT;")
+        wait_sql("SELECT count(*) FROM pg_stat_activity WHERE usename='postgres' AND wait_event='PgSleep'", 1)
+        revoking = executor.submit(request,"/v2/session",token=other,method="DELETE")
+        wait_sql("SELECT count(*) FROM pg_stat_activity WHERE usename='nds_runtime' AND wait_event_type='Lock' AND query LIKE 'SELECT pg_advisory_xact_lock%'", 1)
+        completing = executor.submit(request,"/v2/devices/enrollments",proof(second_path,pending),token=other)
+        wait_sql("SELECT count(*) FROM pg_stat_activity WHERE usename='nds_runtime' AND wait_event_type='Lock' AND query LIKE 'SELECT pg_advisory_xact_lock%'", 2)
+        blocker.result(timeout=5)
+        assert revoking.result(timeout=5)[0] == 204
+        assert completing.result(timeout=5)[0] == 401, "enrollment escaped the earlier session revocation"
+    assert sql("SELECT count(*) FROM nds_enrollment_challenges WHERE challenge_id=" + literal(pending["challenge_id"])).stdout.strip() == "0"
+    assert request("/v2/devices/enrollments", proof(second_path,pending), token=other)[0] == 401
+    assert request("/v2/devices/enrollments", proof(second_path,pending), token=token)[0] == 400
+
+    # Reverse order: an enrollment holding the authority must commit before the
+    # queued revocation can complete; then no reuse of that session is possible.
+    other = second_session()
+    sensitive.append(other)
+    _, pending = challenge(second_public, session=other)
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        blocker = executor.submit(sql,"BEGIN; LOCK TABLE nds_enrollment_challenges IN ACCESS EXCLUSIVE MODE; SELECT pg_sleep(2); COMMIT;")
+        wait_sql("SELECT count(*) FROM pg_locks WHERE relation='nds_enrollment_challenges'::regclass AND mode='AccessExclusiveLock' AND granted",1)
+        completing = executor.submit(request,"/v2/devices/enrollments",proof(second_path,pending),token=other)
+        wait_sql("SELECT count(*) FROM pg_stat_activity WHERE usename='nds_runtime' AND wait_event_type='Lock' AND query LIKE 'SELECT %FROM nds_enrollment_challenges%'",1)
+        revoking = executor.submit(request,"/v2/session",token=other,method="DELETE")
+        wait_sql("SELECT count(*) FROM pg_stat_activity WHERE usename='nds_runtime' AND wait_event_type='Lock' AND query LIKE 'SELECT pg_advisory_xact_lock%'",1)
+        assert not revoking.done()
+        blocker.result(timeout=5)
+        status, enrolled = completing.result(timeout=5)
+        assert status == 201 and revoking.result(timeout=5)[0] == 204
+    assert request("/v2/devices/enrollments",proof(second_path,pending),token=other)[0] == 401
+    assert request("/v2/devices/"+enrolled["device_id"],token=token,method="DELETE")[0] == 204
+
+    # A new key is needed: completed/revoked identities cannot be reassigned.
+    second_path, second_public = key()
+
+    _, expired = challenge(second_public)
+    sql("UPDATE nds_enrollment_challenges SET created_at_ms=created_at_ms-600000,expires_at_ms=expires_at_ms-600000 WHERE challenge_id=" + literal(expired["challenge_id"]))
+    assert request("/v2/devices/enrollments", proof(second_path,expired), token=token) == (400, {"error":"challenge_expired"})
+    sql("UPDATE nds_enrollment_challenges SET expires_at_ms=expires_at_ms+600000 WHERE challenge_id=" + literal(expired["challenge_id"]))
+    assert request("/v2/devices/enrollments", proof(second_path,expired), token=token)[0] == 400, "observed expiry revived"
+    _, exhausted = challenge(second_public)
+    for _ in range(5):
+        assert request("/v2/devices/enrollments", {"challenge_id":exhausted["challenge_id"], "signature":encoded(bytes(64))}, token=token)[0] == 400
+    assert request("/v2/devices/enrollments", proof(second_path,exhausted), token=token)[0] == 400
+
+    # Only generated fixture abuse windows are reset between independent bounds.
+    sql("DELETE FROM nds_auth_limits;")
+    pending = []
+    for _ in range(8):
+        new_path,new_public = key()
+        status,receipt = challenge(new_public)
+        assert status == 201
+        pending.append((new_path,receipt))
+    spare_path,spare_public = key()
+    assert challenge(spare_public) == (503,{"error":"server_busy"})
+    for new_path,receipt in pending:
+        status,value = request("/v2/devices/enrollments",proof(new_path,receipt),token=token)
+        assert status == 201
+        assert request("/v2/devices/" + value["device_id"],token=token,method="DELETE")[0] == 204
+
+    platforms = ["linux","macos","windows","ios","android"]
+    active = []
+    for index in range(32):
+        if index % 8 == 0: sql("DELETE FROM nds_auth_limits;")
+        new_path,new_public = key()
+        active.append(enroll(new_path,new_public,platforms[index % len(platforms)]))
+    assert challenge(spare_public) == (503,{"error":"server_busy"})
+    for value in active:
+        assert request("/v2/devices/" + value["device_id"],token=token,method="DELETE")[0] == 204
+    retained = int(sql("SELECT count(*) FROM nds_devices").stdout)
+    for index in range(128-retained):
+        if index % 8 == 0: sql("DELETE FROM nds_auth_limits;")
+        new_path,new_public = key()
+        value = enroll(new_path,new_public)
+        assert request("/v2/devices/" + value["device_id"],token=token,method="DELETE")[0] == 204
+    assert sql("SELECT count(*) FROM nds_devices").stdout.strip() == "128"
+    sql("DELETE FROM nds_auth_limits;")
+    for index in range(11):
+        status,_ = request("/v2/devices/challenges",{"platform":"linux","display_name":"Synthetic","public_key":spare_public},token=token,headers={"X-Forwarded-For":f"192.0.2.{index+1}"})
+        assert status == (503 if index < 10 else 429), "device-source budget trusted unowned forwarding headers"
+
+    seen = set()
+    cursor = None
+    for page_number in range(4):
+        status,page = request("/v2/devices?limit=100" + ("&cursor="+cursor if cursor else ""),token=token)
+        assert status == 200 and len(page["devices"]) == 32
+        for device in page["devices"]:
+            assert device["device_id"] not in seen and device["status"] == "revoked"
+            seen.add(device["device_id"])
+        cursor=page["next_cursor"]
+        assert (cursor is None) == (page_number == 3)
+    assert len(seen) == 128
+    assert sql("SELECT count(*) FROM information_schema.columns WHERE table_name IN ('nds_devices','nds_enrollment_challenges') AND column_name LIKE '%private%'").stdout.strip() == "0"
+    print("Enrollment acceptance passed on the Linux server: real OpenSSL proofs with all five platform values; strict key rejection before allocation; same-session and concurrent consume; both PostgreSQL-locked revoke/enroll orderings; restart, expiry, attempts and key uniqueness; actual 8/32/128 capacities; finite owner cursor pages and socket-source bounds.")
+    return sensitive
