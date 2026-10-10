@@ -1,7 +1,5 @@
 //! Thin server configuration adapter; envelope, filtering, bounds and output are
 //! owned by the shared SDK. No dependency verbosity can bypass its policy.
-use std::time::Duration;
-
 use nddev_device_sync_telemetry::{Config, DebugWindow, Logger};
 
 use crate::{
@@ -28,41 +26,7 @@ impl Settings {
             }
             Ok(value)
         };
-        let debug = match get("NDS_LOG_MODE").as_deref().unwrap_or("normal") {
-            "normal"
-                if [
-                    "NDS_DEBUG_SCOPE",
-                    "NDS_DEBUG_SECONDS",
-                    "NDS_DEBUG_EVENT_LIMIT",
-                ]
-                .iter()
-                .all(|name| get(name).is_none()) =>
-            {
-                None
-            }
-            "debug" => {
-                let scope = match get("NDS_DEBUG_SCOPE").as_deref() {
-                    Some(scope @ ("http" | "transport" | "database")) => scope.to_owned(),
-                    _ => return Err(LoggingError),
-                };
-                let seconds = get("NDS_DEBUG_SECONDS")
-                    .and_then(|value| value.parse::<u64>().ok())
-                    .filter(|value| (1..=900).contains(value))
-                    .ok_or(LoggingError)?;
-                let events = get("NDS_DEBUG_EVENT_LIMIT")
-                    .unwrap_or_else(|| "1000".into())
-                    .parse::<u64>()
-                    .ok()
-                    .filter(|value| (1..=10000).contains(value))
-                    .ok_or(LoggingError)?;
-                Some(DebugWindow {
-                    scope,
-                    duration: Duration::from_secs(seconds),
-                    events,
-                })
-            }
-            _ => return Err(LoggingError),
-        };
+        let debug = DebugWindow::from_settings(&get).map_err(|_| LoggingError)?;
         Ok(Self(Config {
             service: "nddev-device-sync-server".into(),
             version: label("NDS_VERSION", DEFAULT_VERSION)?,

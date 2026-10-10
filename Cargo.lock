@@ -32,6 +32,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "683d7910e743518b0e34f1186f92494becacb047c7b6bf616c96772180fef923"
 
 [[package]]
+name = "android_log-sys"
+version = "0.3.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "84521a3cf562bc62942e294181d9eef17eb38ceb8c68677bc49f144e4c3d4f8d"
+
+[[package]]
 name = "android_system_properties"
 version = "0.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1429,7 +1435,7 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-server"
-version = "0.0.1"
+version = "0.0.1-alpha.9"
 dependencies = [
  "axum",
  "axum-server",
@@ -1462,13 +1468,15 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-telemetry"
-version = "0.0.1-alpha.1"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-observability.git?rev=10ad696ceda0c211a7f5d23e2ff1a2133e8fb5ca#10ad696ceda0c211a7f5d23e2ff1a2133e8fb5ca"
+version = "0.0.1-alpha.2"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-observability.git?rev=7ae68ea764b3f0e639d551b059eb0651a50b5edd#7ae68ea764b3f0e639d551b059eb0651a50b5edd"
 dependencies = [
+ "android_log-sys",
  "chrono",
  "jsonschema",
  "opentelemetry",
  "opentelemetry_sdk",
+ "serde",
  "serde_json",
  "thiserror",
  "tracing",
