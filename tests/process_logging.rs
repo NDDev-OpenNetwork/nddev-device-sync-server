@@ -65,6 +65,13 @@ impl Process {
             }
         }
         for event in &events {
+            assert!(
+                !matches!(
+                    event["event.name"].as_str(),
+                    Some("logging.fields.rejected" | "logging.event.rejected")
+                ),
+                "unexpected SDK schema rejection"
+            );
             for field in [
                 "timestamp",
                 "severity",
@@ -98,6 +105,20 @@ fn request(port: u16, trace: &str) -> std::io::Result<String> {
 }
 
 fn request_uri(port: u16, trace: &str, method: &str, uri: &str) -> std::io::Result<String> {
+    request_context(
+        port,
+        &format!("00-{trace}-0123456789abcdef-01"),
+        method,
+        uri,
+    )
+}
+
+fn request_context(
+    port: u16,
+    traceparent: &str,
+    method: &str,
+    uri: &str,
+) -> std::io::Result<String> {
     let mut stream = TcpStream::connect_timeout(
         &format!("127.0.0.1:{port}").parse().unwrap(),
         Duration::from_millis(200),
@@ -106,7 +127,7 @@ fn request_uri(port: u16, trace: &str, method: &str, uri: &str) -> std::io::Resu
     stream.set_write_timeout(Some(Duration::from_secs(2)))?;
     write!(
         stream,
-        "{method} {uri} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer synthetic-header-secret\r\nCookie: synthetic-cookie-secret\r\ntraceparent: 00-{trace}-0123456789abcdef-01\r\nConnection: close\r\n\r\n"
+        "{method} {uri} HTTP/1.1\r\nHost: localhost\r\nAuthorization: Bearer synthetic-header-secret\r\nCookie: synthetic-cookie-secret\r\ntraceparent: {traceparent}\r\nConnection: close\r\n\r\n"
     )?;
     let mut response = String::new();
     stream.read_to_string(&mut response)?;
@@ -378,4 +399,48 @@ fn actual_tls_signal_reload_and_shutdown_keep_the_process_envelope() {
     }
     assert!(!text.contains("PRIVATE KEY"));
     assert!(!text.contains(files.0.to_str().unwrap()));
+}
+
+#[test]
+fn unsampled_remote_parent_does_not_suppress_local_error_events() {
+    let (process, port) = server(&[("NDS_TELEMETRY_ENABLED", "false")]);
+    let trace = "abcdef0123456789abcdef0123456789";
+    let response = request_context(
+        port,
+        &format!("00-{trace}-0123456789abcdef-00"),
+        "GET",
+        "/v1/ready",
+    )
+    .unwrap();
+    assert!(response.starts_with("HTTP/1.1 503"));
+    assert!(response.contains(&format!("x-request-id: {trace}")));
+    let (success, events, _) = process.finish(true);
+    assert!(success);
+    assert!(
+        events
+            .iter()
+            .any(|event| event["event.name"] == "http.request.completed"
+                && event["trace_id"] == trace
+                && event["severity"] == "error")
+    );
+}
+
+#[test]
+fn blocked_stdout_does_not_block_requests_or_unbound_process_shutdown() {
+    // Deliberately leave this owned child's output pipe unread. The SDK queue
+    // saturates behind stdout; production work and shutdown must remain bounded.
+    let (process, port) = server(&[]);
+    for index in 0..512 {
+        assert!(
+            request(port, &format!("{:032x}", index + 100))
+                .unwrap()
+                .starts_with("HTTP/1.1 200")
+        );
+    }
+    let started = Instant::now();
+    let (success, _, _) = process.finish(true);
+    assert!(success);
+    assert!(started.elapsed() < Duration::from_secs(4));
+    // No assertion of complete output: the documented queue can drop records
+    // and a blocked writer cannot finish draining before process exit.
 }

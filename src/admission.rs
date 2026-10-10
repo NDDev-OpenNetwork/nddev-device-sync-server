@@ -26,6 +26,12 @@ impl Pressure {
         let count = self.0.fetch_add(1, Ordering::Relaxed).saturating_add(1);
         if count.is_power_of_two() {
             tracing::warn!(
+                module = "admission",
+                scope = if resource == "connections" {
+                    "transport"
+                } else {
+                    "http"
+                },
                 event.name = "admission.saturated",
                 resource,
                 rejected_count = count,
@@ -38,6 +44,12 @@ impl Pressure {
         let count = self.0.swap(0, Ordering::Relaxed);
         if count > 0 {
             tracing::info!(
+                module = "admission",
+                scope = if resource == "connections" {
+                    "transport"
+                } else {
+                    "http"
+                },
                 event.name = "admission.recovered",
                 resource,
                 rejected_count = count,

@@ -67,7 +67,14 @@ async fn exchange(addr: SocketAddr, connector: &TlsConnector) -> (Vec<u8>, Strin
         .await
         .unwrap();
     let cert = tls.get_ref().1.peer_certificates().unwrap()[0].to_vec();
-    tls.write_all(b"GET /v1/health HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+    use opentelemetry::{propagation::TextMapPropagator, trace::TraceContextExt};
+    let parent = nddev_device_sync_telemetry::operation_span("test_client", "http").unwrap();
+    let context = nddev_device_sync_telemetry::trace_context(&parent);
+    let trace_id = context.span().span_context().trace_id().to_string();
+    let mut headers = std::collections::HashMap::new();
+    opentelemetry_sdk::propagation::TraceContextPropagator::new()
+        .inject_context(&context, &mut headers);
+    tls.write_all(format!("GET /v1/health HTTP/1.1\r\nHost: localhost\r\ntraceparent: {}\r\nConnection: close\r\n\r\n", headers["traceparent"]).as_bytes())
         .await
         .unwrap();
     let mut bytes = Vec::new();
@@ -75,11 +82,15 @@ async fn exchange(addr: SocketAddr, connector: &TlsConnector) -> (Vec<u8>, Strin
         .await
         .unwrap()
         .unwrap();
-    (cert, String::from_utf8(bytes).unwrap())
+    let response = String::from_utf8(bytes).unwrap();
+    assert!(response.contains(&format!("x-request-id: {trace_id}\r\n")));
+    (cert, response)
 }
 
 #[tokio::test]
 async fn https_preserves_headers_and_only_reloads_valid_pairs() {
+    let _logging = nddev_device_sync_server::logging::init_logging().unwrap();
+    _logging.validate().unwrap();
     let first = generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let second = generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let files = CertificateFiles::new(&first);
