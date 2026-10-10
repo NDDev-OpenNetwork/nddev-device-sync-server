@@ -44,6 +44,7 @@ pub struct ServerConfig {
     pub standards_release: String,
     pub source_url: String,
     pub telemetry_enabled: bool,
+    pub public_origin: Option<reqwest::Url>,
     pub max_connections: usize,
     pub max_requests: usize,
     pub identity: Option<crate::identity::config::AuthConfig>,
@@ -69,6 +70,8 @@ pub enum ConfigError {
     Identity,
     #[error("identity requires HTTPS except on a loopback listener")]
     IdentityHttpsRequired,
+    #[error("invalid public origin")]
+    PublicOrigin,
 }
 
 impl ServerConfig {
@@ -103,6 +106,9 @@ impl ServerConfig {
             telemetry_enabled: get("NDS_TELEMETRY_ENABLED")
                 .map(|value| !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off"))
                 .unwrap_or(true),
+            public_origin: get("NDS_PUBLIC_ORIGIN")
+                .map(|value| public_origin(&value))
+                .transpose()?,
             max_connections: admission_limit(get("NDS_MAX_CONNECTIONS"), 256, 4096)?,
             max_requests: admission_limit(get("NDS_MAX_REQUESTS"), 64, 1024)?,
             identity: get("NDS_AUTH_CONFIG_FILE")
@@ -114,6 +120,28 @@ impl ServerConfig {
         }
         Ok(config)
     }
+}
+
+fn public_origin(value: &str) -> Result<reqwest::Url, ConfigError> {
+    let url = reqwest::Url::parse(value).map_err(|_| ConfigError::PublicOrigin)?;
+    let loopback = url.host_str().is_some_and(|host| {
+        host == "localhost"
+            || host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
+    });
+    if value.len() > 2048
+        || !(url.scheme() == "https" || url.scheme() == "http" && loopback)
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err(ConfigError::PublicOrigin);
+    }
+    Ok(url)
 }
 
 fn admission_limit(
