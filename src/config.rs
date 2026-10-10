@@ -2,7 +2,7 @@ use std::{env, fmt, fs::File, io::Read, net::SocketAddr, path::PathBuf};
 
 use thiserror::Error;
 
-pub const DEFAULT_VERSION: &str = "0.0.1-alpha.8";
+pub const DEFAULT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_CHANNEL: &str = "alpha";
 pub const DEFAULT_STANDARDS_RELEASE: &str = "v0.0.1-alpha.9";
 
