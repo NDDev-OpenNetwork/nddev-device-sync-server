@@ -80,6 +80,7 @@ services:
       NDS_TLS_KEY_FILE: /run/nds-tls/current/privkey.pem
       NDS_TELEMETRY_ENABLED: ${NDS_TELEMETRY_ENABLED:-true}
       NDS_PUBLIC_HOST: ${NDS_PUBLIC_HOST:?Set certificate hostname}
+      NDS_PUBLIC_ORIGIN: ${NDS_PUBLIC_ORIGIN:?Set the HTTPS service origin for signed requests}
     secrets: [runtime_database_url]
     volumes:
       # A directory mount sees atomic certificate replacements; file mounts do not.

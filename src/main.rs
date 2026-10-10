@@ -34,7 +34,15 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    let result = runtime.block_on(run());
+    let result = runtime.block_on(async {
+        let observer = logging.watch_delivery();
+        let result = run().await;
+        if let Some(observer) = observer {
+            observer.abort();
+            let _ = observer.await;
+        }
+        result
+    });
     runtime.shutdown_timeout(std::time::Duration::from_secs(2));
     match result {
         Ok(()) => ExitCode::SUCCESS,

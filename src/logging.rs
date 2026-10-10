@@ -50,6 +50,40 @@ pub struct LoggingGuard {
     valid: bool,
 }
 impl LoggingGuard {
+    /// One process-owned observer reports actual egress freshness and loss. It
+    /// creates no spans, so exporter diagnostics cannot recursively export.
+    pub fn watch_delivery(&self) -> Option<tokio::task::JoinHandle<()>> {
+        let delivery = self._traces.as_ref()?.delivery.clone();
+        Some(tokio::spawn(async move {
+            use std::sync::atomic::Ordering;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(15));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let mut previous_dropped = 0;
+            loop {
+                interval.tick().await;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|time| time.as_millis() as u64)
+                    .unwrap_or(0);
+                let last = delivery.last_success_ms.load(Ordering::Acquire);
+                let available = last > 0 && now.checked_sub(last).is_some_and(|age| age <= 60_000);
+                let dropped = delivery.dropped.load(Ordering::Acquire);
+                let dropped_count = dropped.min(9_007_199_254_740_991);
+                if dropped > previous_dropped {
+                    tracing::warn!(module="process",event.name="telemetry.traces.delivery.failed",available,error.type="exporter_delivery",dropped_count,outcome="error");
+                } else {
+                    tracing::info!(
+                        module = "process",
+                        event.name = "telemetry.traces.delivery.checked",
+                        available,
+                        dropped_count,
+                        outcome = "checked"
+                    );
+                }
+                previous_dropped = dropped;
+            }
+        }))
+    }
     /// Keep the installed safe logger alive while the caller reports malformed
     /// configuration, then let SDK Drop perform its bounded output shutdown.
     pub fn validate(&self) -> Result<(), LoggingError> {

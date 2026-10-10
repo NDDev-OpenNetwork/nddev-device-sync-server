@@ -426,6 +426,28 @@ fn unsampled_remote_parent_does_not_suppress_local_error_events() {
 }
 
 #[test]
+fn unavailable_native_collector_reports_real_loss_in_local_process_events() {
+    let collector = TcpListener::bind("127.0.0.1:0").unwrap();
+    let origin = format!("http://{}", collector.local_addr().unwrap());
+    drop(collector);
+    let (process, port) = server(&[("NDS_OTLP_ENDPOINT", &origin)]);
+    assert!(
+        request(port, "0123456789abcdef0123456789abcdef")
+            .unwrap()
+            .starts_with("HTTP/1.1 200")
+    );
+    std::thread::sleep(Duration::from_secs(16));
+    let (success, events, text) = process.finish(true);
+    assert!(success);
+    assert!(events.iter().any(
+        |event| event["event.name"] == "telemetry.traces.delivery.failed"
+            && event["available"] == false
+            && event["dropped_count"].as_u64().unwrap() > 0
+    ));
+    assert!(!text.contains(&origin));
+}
+
+#[test]
 fn blocked_stdout_does_not_block_requests_or_unbound_process_shutdown() {
     // Deliberately leave this owned child's output pipe unread. The SDK queue
     // saturates behind stdout; production work and shutdown must remain bounded.

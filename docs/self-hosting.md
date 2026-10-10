@@ -18,6 +18,8 @@ from a region must be measured there; direct DNS cannot guarantee routing.
 | `NDS_MAX_CONNECTIONS` | Accepted connection tasks including TLS handshakes; default 256, range 1–4096 |
 | `NDS_MAX_REQUESTS` | Active handlers across all connections; default 64, range 1–1024 |
 | `NDS_ENVIRONMENT` | Non-secret deployment label for every local event; default `self-hosted` |
+| `NDS_PUBLIC_ORIGIN` | Exact HTTPS service origin used to verify signed device requests |
+| `NDS_OTLP_ENDPOINT` | Optional operator-owned collector origin for native OTLP/HTTP traces; no credentials in the URL |
 
 Absent TLS configuration enables HTTP for local development. A partial or invalid
 pair fails startup; there is no fallback from failed TLS to plaintext. Production
@@ -74,6 +76,7 @@ Set non-secret deployment inputs outside Git:
 export NDS_IMAGE='registry.example.invalid/nds/server@sha256:<reviewed-image-digest>'
 export NDS_SOURCE_COMMIT='<full-source-commit>'
 export NDS_PUBLIC_HOST='sync.example.invalid'
+export NDS_PUBLIC_ORIGIN='https://sync.example.invalid'
 export NDS_HTTPS_BIND='0.0.0.0'
 export NDS_SECRETS_DIRECTORY='/operator-owned/secrets'
 export NDS_TLS_DIRECTORY='/operator-owned/tls'
@@ -230,8 +233,12 @@ migrations, TLS reload and shutdown. Version/channel/standards/environment
 labels permit only 1–128 ASCII letters, digits, dots, underscores and hyphens.
 Normal logging is the default. `RUST_LOG` does not enable dependency dumps.
 Local logs and real OpenTelemetry contexts remain available when telemetry
-export is disabled. This server does not configure a native OTLP exporter;
-`NDS_TELEMETRY_ENABLED` is operator intent, not a delivery receipt.
+export is disabled. With `NDS_OTLP_ENDPOINT` and enabled export, the shared SDK
+sends actual native spans to the operator-owned collector. Its admission queue,
+HTTP deadline, retries and shutdown are bounded; arbitrary vendor tracestate,
+events, links and error prose are removed before export. Collector credentials
+remain in the central pipeline. `NDS_TELEMETRY_ENABLED` is operator intent, not
+a delivery receipt; no configured endpoint means no native trace egress.
 
 Each emitted record carries a per-process `producer.instance_id` and ordered
 `producer.sequence` assigned under the SDK sink lock. Filtered events do not
