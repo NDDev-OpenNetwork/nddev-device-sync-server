@@ -105,6 +105,7 @@ async fn https_preserves_headers_and_only_reloads_valid_pairs() {
         standards_release: "test".into(),
         source_url: "https://example.invalid/source".into(),
         telemetry_enabled: true,
+        public_origin: None,
         max_connections: 256,
         max_requests: 64,
         identity: None,

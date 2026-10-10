@@ -15,13 +15,14 @@ The current server provides:
 - email OTP and GitHub PKCE for one explicitly configured owner;
 - browser pairing approval, expiring/revocable sessions and bounded abuse controls;
 - session-bound Ed25519 device enrollment, paged owner inventory and revocation;
+- signed encrypted sync operations, immutable idempotency receipts and explicit conflicts;
 - generated wire types and immutable core/protocol source pins;
 - compatible health metadata without a speculative core module registry.
 
 The legacy `module_count` health field is zero: the server composes no local-tool
 adapters. The native agent owns the actual manifest inventory and observations.
 
-Sync mutations, vault and native server OTLP export are separate next steps. Without private identity configuration, `/v2/auth/methods`
+Native vault storage and key pairing are separate client work. Without private identity configuration, `/v2/auth/methods`
 reports unavailable methods. Provider readiness does not prove a completed
 sign-in or delivery to an external mailbox.
 
@@ -65,6 +66,10 @@ All HTTP responses, including readiness failures and timeouts, use
 also use DNS-only records and omit CDN/proxy response caching in its deployment.
 
 The local JSON log remains available for diagnosis. The telemetry-enabled health
-field describes operator intent. This server configures no OTLP exporter: local
-contexts and NDJSON correlation do not prove exported spans or OpenObserve delivery.
-The observability service owns its separately verified export pipeline.
+field describes operator intent. Configure `NDS_OTLP_ENDPOINT` with the origin of
+an operator-owned Vector collector to export actual native request and operation
+spans through the shared SDK. Setting `NDS_TELEMETRY_ENABLED=off` prevents exporter
+construction; local error/security records remain available. Collector accounts
+are not installed in this server. Tracing admission, retries and shutdown are
+bounded; the SDK records successful batches, failures and dropped spans. Confirm
+actual OpenObserve receipt independently of the configuration flag.

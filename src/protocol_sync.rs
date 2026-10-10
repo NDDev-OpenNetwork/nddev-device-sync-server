@@ -9,79 +9,131 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EnrollmentRequest {
-    pub display_name: String,
+pub struct SyncApplied {
+    pub operation_id: String,
 
-    pub platform: Platform,
+    pub outcome: SyncAppliedOutcome,
 
-    pub public_key: String,
+    pub revision: i64,
+
+    pub server_seq: i64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Platform {
-    Android,
-
-    Ios,
-
-    Linux,
-
-    Macos,
-
-    Windows,
+pub enum SyncAppliedOutcome {
+    Applied,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EnrollmentChallenge {
-    pub challenge: String,
+pub struct SyncConflict {
+    pub base_revision: i64,
 
-    pub challenge_id: String,
+    pub current_revision: i64,
 
-    pub device_id: String,
+    pub operation_id: String,
 
-    pub expires_at: String,
-}
+    pub outcome: SyncConflictOutcome,
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EnrollmentProof {
-    pub challenge_id: String,
+    pub resolution_state: ResolutionState,
 
-    pub signature: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeviceList {
-    pub devices: Vec<Device>,
-
-    #[serde(deserialize_with = "deserialize_required_nullable")]
-    pub next_cursor: Option<String>,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Device {
-    pub created_at: String,
-
-    pub device_id: String,
-
-    pub display_name: String,
-
-    pub platform: Platform,
-
-    pub public_key: String,
-
-    pub status: Status,
+    pub server_seq: i64,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Status {
-    Active,
+pub enum SyncConflictOutcome {
+    Conflict,
+}
 
-    Revoked,
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionState {
+    Unresolved,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncPage {
+    pub entries: Vec<SyncEntry>,
+
+    pub has_more: bool,
+
+    pub next_after_seq: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncEntry {
+    pub operation: SyncOperation,
+
+    pub result: Sync,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncOperation {
+    pub base_revision: i64,
+
+    pub device_id: String,
+
+    pub entity_id: String,
+
+    pub entity_type: EntityType,
+
+    pub idempotency_key: String,
+
+    pub operation_id: String,
+
+    pub payload: EncryptedPayload,
+
+    pub schema_version: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityType {
+    #[serde(rename = "account_state")]
+    AccountState,
+
+    #[serde(rename = "clipboard_item")]
+    ClipboardItem,
+
+    #[serde(rename = "device_state")]
+    DeviceState,
+
+    #[serde(rename = "module_state")]
+    ModuleState,
+
+    #[serde(rename = "vault_record")]
+    VaultRecord,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptedPayload {
+    pub algorithm: Algorithm,
+
+    pub ciphertext: String,
+
+    pub key_id: String,
+
+    pub nonce: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Algorithm {
+    #[serde(rename = "aes-256-gcm")]
+    Aes256Gcm,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum Sync {
+    Applied(SyncApplied),
+    Conflict(SyncConflict),
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -140,12 +192,4 @@ pub enum ErrorEnum {
 
     #[serde(rename = "server_busy")]
     ServerBusy,
-}
-
-fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-    T: serde::Deserialize<'de>,
-{
-    Option::<T>::deserialize(deserializer)
 }

@@ -117,7 +117,7 @@ try:
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
         for _ in range(2):
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "3"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "4"
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0
