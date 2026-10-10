@@ -76,7 +76,7 @@ fn service(state: &AppState) -> Result<&Service, ApiError> {
         .as_deref()
         .ok_or(IdentityError::Unavailable.into())
 }
-fn peer(peer: Option<Extension<PeerAddress>>) -> Result<Vec<u8>, ApiError> {
+pub(crate) fn peer(peer: Option<Extension<PeerAddress>>) -> Result<Vec<u8>, IdentityError> {
     // Only the accepted socket peer enters abuse controls. Neither ports nor
     // Forwarded/X-Forwarded-For are trusted by this direct-origin server.
     match peer.ok_or(IdentityError::Unavailable)?.0.0 {
@@ -104,9 +104,9 @@ fn locale(headers: &HeaderMap) -> Locale {
     }
     Locale::En
 }
-fn bearer(headers: &HeaderMap) -> Result<&str, ApiError> {
+pub(crate) fn bearer(headers: &HeaderMap) -> Result<&str, IdentityError> {
     if headers.get_all("authorization").iter().count() != 1 {
-        return Err(IdentityError::Denied.into());
+        return Err(IdentityError::Denied);
     }
     let (scheme, token) = headers
         .get("authorization")
@@ -114,7 +114,7 @@ fn bearer(headers: &HeaderMap) -> Result<&str, ApiError> {
         .and_then(|value| value.split_once(' '))
         .ok_or(IdentityError::Denied)?;
     if !scheme.eq_ignore_ascii_case("bearer") {
-        return Err(IdentityError::Denied.into());
+        return Err(IdentityError::Denied);
     }
     Ok(token)
 }

@@ -33,7 +33,7 @@ impl Store {
     pub fn new(pool: PgPool) -> Self {
         Self { pool }
     }
-    async fn transaction(&self) -> Result<Tx<'_>, IdentityError> {
+    pub(crate) async fn transaction(&self) -> Result<Tx<'_>, IdentityError> {
         let mut tx = self.pool.begin().await.map_err(unavailable)?;
         // Personal-alpha issuance is serialized across processes. This one small
         // authority enforces capacity/rate/consume invariants without local caches.
@@ -63,7 +63,7 @@ impl Store {
     }
 }
 
-async fn clean(tx: &mut Tx<'_>, now: u64) -> Result<(), IdentityError> {
+pub(crate) async fn clean(tx: &mut Tx<'_>, now: u64) -> Result<(), IdentityError> {
     let now = millis(now)?;
     sqlx::query("DELETE FROM nds_auth_limits WHERE ends_at_ms <= $1")
         .bind(now)
@@ -83,7 +83,7 @@ async fn clean(tx: &mut Tx<'_>, now: u64) -> Result<(), IdentityError> {
     Ok(())
 }
 
-async fn rate(
+pub(crate) async fn rate(
     tx: &mut Tx<'_>,
     key: ProtectedDigest,
     policy: RatePolicy,
@@ -218,23 +218,32 @@ impl IdentityStore for Store {
     }
     async fn session(&self, token: ProtectedDigest, now: u64) -> Result<Session, IdentityError> {
         bounded(async {
+            let mut tx = self.transaction().await?;
             // An observed expiry is deleted, so clock rollback cannot revive it.
-            sqlx::query("DELETE FROM nds_sessions WHERE token_digest=$1 AND expires_at_ms <= $2").bind(token.0.as_slice()).bind(millis(now)?).execute(&self.pool).await.map_err(unavailable)?;
-            let row = sqlx::query("SELECT user_id,tenant_id,auth_method,expires_at_ms FROM nds_sessions WHERE token_digest=$1 AND expires_at_ms > $2").bind(token.0.as_slice()).bind(millis(now)?).fetch_optional(&self.pool).await.map_err(unavailable)?.ok_or(IdentityError::Denied)?;
+            sqlx::query("DELETE FROM nds_sessions WHERE token_digest=$1 AND expires_at_ms <= $2").bind(token.0.as_slice()).bind(millis(now)?).execute(&mut *tx).await.map_err(unavailable)?;
+            let row = sqlx::query("SELECT user_id,tenant_id,auth_method,expires_at_ms FROM nds_sessions WHERE token_digest=$1 AND expires_at_ms > $2").bind(token.0.as_slice()).bind(millis(now)?).fetch_optional(&mut *tx).await.map_err(unavailable)?;
+            // Denial must not roll back the observed-expiry deletion.
+            tx.commit().await.map_err(unavailable)?;
+            let row = row.ok_or(IdentityError::Denied)?;
             Ok(Session { owner: Owner { user_id: UserId::new(row.try_get::<String,_>("user_id").map_err(unavailable)?).map_err(unavailable)?, tenant_id: TenantId::new(row.try_get::<String,_>("tenant_id").map_err(unavailable)?).map_err(unavailable)? }, method: match row.try_get::<&str,_>("auth_method").map_err(unavailable)? { "email_otp"=>AuthMethod::EmailOtp,"github"=>AuthMethod::Github,_=>return Err(IdentityError::Unavailable) }, expires_at_ms: unsigned(row.try_get("expires_at_ms").map_err(unavailable)?)? })
         }).await
     }
     async fn revoke(&self, token: ProtectedDigest, now: u64) -> Result<(), IdentityError> {
         bounded(async {
-            let result = sqlx::query(
-                "DELETE FROM nds_sessions WHERE token_digest=$1 AND expires_at_ms > $2",
+            let mut tx = self.transaction().await?;
+            let expiry: Option<i64> = sqlx::query_scalar(
+                "DELETE FROM nds_sessions WHERE token_digest=$1 RETURNING expires_at_ms",
             )
             .bind(token.0.as_slice())
-            .bind(millis(now)?)
-            .execute(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(unavailable)?;
-            if result.rows_affected() == 1 {
+            tx.commit().await.map_err(unavailable)?;
+            if expiry
+                .map(unsigned)
+                .transpose()?
+                .is_some_and(|expiry| now < expiry)
+            {
                 Ok(())
             } else {
                 Err(IdentityError::Denied)

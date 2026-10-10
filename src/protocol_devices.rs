@@ -9,103 +9,69 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct AuthMethods {
-    pub email_otp: MethodAvailability,
+pub struct EnrollmentRequest {
+    pub display_name: String,
 
-    pub github: MethodAvailability,
+    pub platform: Platform,
+
+    pub public_key: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum MethodAvailability {
-    Available,
+pub enum Platform {
+    Android,
 
-    Unavailable,
+    Ios,
+
+    Linux,
+
+    Macos,
+
+    Windows,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct EmailChallengeRequest {
-    pub email: String,
-}
+pub struct EnrollmentChallenge {
+    pub challenge: String,
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EmailChallenge {
     pub challenge_id: String,
 
-    pub expires_in_seconds: i32,
-
-    pub resend_after_seconds: i32,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct EmailVerifyRequest {
-    pub challenge_id: String,
-
-    pub code: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SessionIssued {
-    pub session: Session,
-
-    pub session_token: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Session {
-    pub auth_method: AuthMethod,
+    pub device_id: String,
 
     pub expires_at: String,
-
-    pub tenant_id: String,
-
-    pub user_id: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthMethod {
-    #[serde(rename = "email_otp")]
-    EmailOtp,
-
-    Github,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GithubStart {
-    pub authorization_url: String,
+pub struct EnrollmentProof {
+    pub challenge_id: String,
 
-    pub exchange_token: String,
-
-    pub expires_in_seconds: i32,
-
-    pub flow_id: String,
-
-    pub poll_after_seconds: i32,
-
-    /// Comparison code displayed by the initiating app and browser approval page; not a bearer
-    /// credential or email OTP.
-    pub verification_code: String,
+    pub signature: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GithubExchangeRequest {
-    pub exchange_token: String,
+pub struct DeviceList {
+    pub devices: Vec<Device>,
 
-    pub flow_id: String,
+    #[serde(deserialize_with = "deserialize_required_nullable")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct GithubPending {
-    pub retry_after_seconds: i32,
+pub struct Device {
+    pub created_at: String,
+
+    pub device_id: String,
+
+    pub display_name: String,
+
+    pub platform: Platform,
+
+    pub public_key: String,
 
     pub status: Status,
 }
@@ -113,25 +79,9 @@ pub struct GithubPending {
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
-    Pending,
-}
+    Active,
 
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct GithubApprovalForm {
-    pub csrf_token: String,
-
-    pub decision: Decision,
-
-    pub flow_id: String,
-}
-
-#[derive(Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Decision {
-    Approve,
-
-    Deny,
+    Revoked,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -190,4 +140,12 @@ pub enum ErrorEnum {
 
     #[serde(rename = "server_busy")]
     ServerBusy,
+}
+
+fn deserialize_required_nullable<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer)
 }

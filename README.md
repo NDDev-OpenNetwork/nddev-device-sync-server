@@ -14,10 +14,11 @@ The current server provides:
 - finite connection/handler admission and scoped, expiring debug diagnostics;
 - email OTP and GitHub PKCE for one explicitly configured owner;
 - browser pairing approval, expiring/revocable sessions and bounded abuse controls;
+- session-bound Ed25519 device enrollment, paged owner inventory and revocation;
 - generated wire types and immutable core/protocol source pins;
 - a module count exposed from the compiled core registry.
 
-Device enrollment, sync mutations, vault and the observability gateway are
+Sync mutations, vault and the observability gateway are
 separate next steps. Without private identity configuration, `/v2/auth/methods`
 reports unavailable methods. Provider readiness does not prove a completed
 sign-in or delivery to an external mailbox.
@@ -36,7 +37,8 @@ The PostgreSQL/SMTP acceptance also validates actual process NDJSON against the
 closed telemetry schema at the manifest's exact protocol commit, including
 formats and the 16 KiB event limit. Its canonical Python validator runs in a
 temporary virtual environment with hash-locked dependencies; Python 3 with
-`venv` and pip support is required. Event values are neither saved nor printed.
+`venv` and pip support is required. OpenSSL provides an independent Ed25519
+signer for real enrollment acceptance. Event values are neither saved nor printed.
 
 Set `DATABASE_URL_FILE` (or `DATABASE_URL`) to enable PostgreSQL readiness.
 Run the explicit `migrate` command with `NDS_MIGRATION_DATABASE_URL_FILE` first;
