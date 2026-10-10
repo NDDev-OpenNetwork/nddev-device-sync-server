@@ -3,6 +3,10 @@
 Use the pinned toolchain and the repository's `just` recipes. Keep runtime
 credentials, private estate data and live telemetry outside this repository.
 
+`just check` requires cargo-nextest 0.9.148, cargo-audit 0.22.2 and cargo-deny
+0.20.2, pinned in CI. Tests and Clippy use the committed dependency lock;
+advisory, license and source checks are part of the same gate.
+
 `main` and `dev` are permanent branches. Make scoped changes on a working
 branch, submit a pull request to `dev`, and promote reviewed changes from
 `dev` to `main`. Use Conventional Commits and signed commits. Do not delete
