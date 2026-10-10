@@ -282,7 +282,7 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         completion = next(event for event in events if event.get("event.name") == "http.request.completed" and event.get("trace_id") == otp_trace)
         delivery = next(event for event in events if event.get("event.name") == "email.delivery.accepted" and event.get("trace_id") == otp_trace)
         assert completion["status"] == 202 and completion["module"] == "http"
-        assert delivery["module"] == "identity" and delivery["mailbox_delivery"] == "unverified"
+        assert delivery["module"] == "identity" and delivery["scope"] == "transport" and delivery["mailbox_delivery"] == "unverified"
         assert delivery["span_id"] != completion["span_id"], "SMTP must have its own child span"
         device_events = [event for event in events if event.get("event.name", "").startswith("device.")]
         assert device_events and all(event["module"] == "devices" for event in device_events)

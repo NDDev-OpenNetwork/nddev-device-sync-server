@@ -45,7 +45,7 @@ impl Drop for Inner {
             + usize::from(self.busy.load(Ordering::Relaxed));
         tracing::info!(
             module = "identity",
-            scope = "http",
+            scope = "transport",
             event.name = "email.delivery.stopped",
             dropped_count = dropped,
             outcome = "stopped"
@@ -96,7 +96,7 @@ impl Mailer {
         let ready = Arc::new(AtomicBool::new(probe(&transport).await));
         tracing::info!(
             module = "identity",
-            scope = "http",
+            scope = "transport",
             event.name = "email.transport.checked",
             available = ready.load(Ordering::Relaxed),
             outcome = "checked"
@@ -118,10 +118,10 @@ impl Mailer {
                         let available=probe(&transport).await;
                         worker_time.store(super::now_ms().unwrap_or(0),Ordering::Relaxed);
                         let previous=worker_ready.swap(available,Ordering::Relaxed);
-                        if previous!=available { tracing::info!(module = "identity", scope = "http", event.name="email.transport.changed", available, outcome=if available {"ready"} else {"unavailable"}); }
+                        if previous!=available { tracing::info!(module = "identity", scope = "transport", event.name="email.transport.changed", available, outcome=if available {"ready"} else {"unavailable"}); }
                         if available {backoff_seconds=60;failed_probes=0;} else {
                             backoff_seconds=(backoff_seconds*2).min(300);failed_probes=failed_probes.saturating_add(1);
-                            tracing::warn!(module = "identity", scope = "http", event.name="email.transport.unavailable",retry_count=failed_probes,backoff_seconds,outcome="unavailable");
+                            tracing::warn!(module = "identity", scope = "transport", event.name="email.transport.unavailable",retry_count=failed_probes,backoff_seconds,outcome="unavailable");
                         }
                         refresh.as_mut().reset(tokio::time::Instant::now()+Duration::from_secs(backoff_seconds));
                     },
@@ -144,11 +144,11 @@ impl Mailer {
                             };
                             let result=tokio::time::timeout(Duration::from_secs(8),delivery).await.unwrap_or(Err(IdentityError::Unavailable));
                             match result {
-                                Ok(()) => { worker_ready.store(true,Ordering::Relaxed); worker_time.store(super::now_ms().unwrap_or(0),Ordering::Relaxed); tracing::info!(module = "identity", scope = "http", event.name="email.delivery.accepted", outcome="provider_accepted", mailbox_delivery="unverified"); },
+                                Ok(()) => { worker_ready.store(true,Ordering::Relaxed); worker_time.store(super::now_ms().unwrap_or(0),Ordering::Relaxed); tracing::info!(module = "identity", scope = "transport", event.name="email.delivery.accepted", outcome="provider_accepted", mailbox_delivery="unverified"); },
                                 Err(error) => {
                                     if error==IdentityError::Unavailable { worker_ready.store(false,Ordering::Relaxed); }
                                     let invalidated=store.invalidate_email(&message.challenge_id).await.is_ok();
-                                    tracing::error!(module = "identity", scope = "http", event.name="email.delivery.failed", error.type=%error, challenge_invalidated=invalidated, outcome="error");
+                                    tracing::error!(module = "identity", scope = "transport", event.name="email.delivery.failed", error.type=%error, challenge_invalidated=invalidated, outcome="error");
                                 }
                             }
                         }.instrument(span).await;
@@ -199,13 +199,13 @@ impl EmailDelivery for Mailer {
 }
 
 fn delivery_span(parent: SpanContext) -> tracing::Span {
-    let span = nddev_device_sync_telemetry::operation_span("identity", "http")
+    let span = nddev_device_sync_telemetry::operation_span("identity", "transport")
         .expect("static delivery span labels");
     if span
         .set_parent(Context::new().with_remote_span_context(parent))
         .is_err()
     {
-        tracing::warn!(module = "identity", scope = "http", event.name = "email.delivery.context_unavailable", error.type = "trace_context", outcome = "error");
+        tracing::warn!(module = "identity", scope = "transport", event.name = "email.delivery.context_unavailable", error.type = "trace_context", outcome = "error");
     }
     span
 }
@@ -242,6 +242,13 @@ mod tests {
             let spans = captured.0.lock().unwrap();
             assert_eq!(spans.len(), 2);
             assert_eq!(spans[1].parent_span_id, parent_id);
+            assert!(
+                spans[1]
+                    .attributes
+                    .iter()
+                    .any(|field| field.key.as_str() == "scope"
+                        && field.value.as_str() == "transport")
+            );
             assert!(spans[1].start_time >= spans[0].end_time);
         });
         provider.shutdown().unwrap();
