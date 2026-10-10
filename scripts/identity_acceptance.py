@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 import uuid
 from enrollment_acceptance import check_enrollment
+from sync_acceptance import check_sync
 
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
 
@@ -46,7 +47,7 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-        env = env | {"NDS_AUTH_CONFIG_FILE": str(config_file), "NDS_SERVER_ADDR": f"127.0.0.1:{port}", "NDS_MAX_REQUESTS": "64"}
+        env = env | {"NDS_AUTH_CONFIG_FILE": str(config_file), "NDS_SERVER_ADDR": f"127.0.0.1:{port}", "NDS_PUBLIC_ORIGIN": f"http://127.0.0.1:{port}", "NDS_MAX_REQUESTS": "64"}
 
         def request(path, body=None, token=None, method=None, headers=None):
             headers = (headers or {}) | ({"Content-Type": "application/json"} if body is not None else {})
@@ -244,6 +245,7 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             assert server.returncode == 0
             server = start()
 
+        sensitive += check_sync(request, session_issued["session_token"], restart_enrollment, directory, sql, f"http://127.0.0.1:{port}")
         sensitive += check_enrollment(request, session_issued["session_token"], second_session, restart_enrollment, directory, sql)
         expired_logout = second_session()
         sensitive.append(expired_logout)

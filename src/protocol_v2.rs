@@ -1,7 +1,7 @@
 // Generated; do not edit. AGPL-3.0-only. NDDev OpenNetwork — https://nddev.ai
 // Source: NDDev-OpenNetwork/nddev-device-sync-protocol/contracts/v2/control-plane.schema.json
-// Schema SHA-256: 0f0019b3feba57ab70ff8259953c421414a6edb26c99fbcd8762d6af275564a2
-// Generator script SHA-256: 7bc9a3eb58f85fbefaea8170a5625af6258acbf3ff797fe56e30cafbaee3b6ee
+// Schema SHA-256: 445e6a18fe4c8c47af5622fa4abdad7a5f193e1d46357348fe800dece0ba0021
+// Generator script SHA-256: 64d6c1aef18ee0821827739b0e338fef7db9b503b9885f7af1c5145a6b0da98a
 // Tool: quicktype-core 26.0.0; dependency lock SHA-256: 643e0f2ba88602f4acb9546c401d4838e8e106a9180c0e6f3a760985081bfcf6
 // DTO generation is not schema, authorization or cryptographic validation.
 

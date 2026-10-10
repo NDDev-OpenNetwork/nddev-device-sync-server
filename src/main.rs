@@ -8,8 +8,8 @@ use nddev_device_sync_server::{
     router, transport,
 };
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let logging = match init_logging() {
         Ok(guard) => guard,
         Err(error) => {
@@ -21,7 +21,22 @@ async fn main() -> ExitCode {
         tracing::error!(event.name = "process.failed", module = "process", error.type = %error, outcome = "error");
         return ExitCode::FAILURE;
     }
-    match run().await {
+    // The native blocking OTLP client is constructed and dropped outside Tokio.
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .max_blocking_threads(8)
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(_) => {
+            tracing::error!(event.name="process.failed", module="process", error.type="runtime_unavailable", outcome="error");
+            return ExitCode::FAILURE;
+        }
+    };
+    let result = runtime.block_on(run());
+    runtime.shutdown_timeout(std::time::Duration::from_secs(2));
+    match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
             // Adapter errors expose stable classes, never driver messages, paths or URLs.
@@ -68,6 +83,7 @@ fn process_error_class(error: &(dyn std::error::Error + 'static)) -> &'static st
             ConfigError::AdmissionLimit => "configuration_admission_limit",
             ConfigError::Identity => "configuration_identity",
             ConfigError::IdentityHttpsRequired => "configuration_identity_https_required",
+            ConfigError::PublicOrigin => "configuration_public_origin",
         };
     }
     if let Some(error) = error.downcast_ref::<DatabaseError>() {

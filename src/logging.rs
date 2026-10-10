@@ -1,5 +1,6 @@
 //! Thin server configuration adapter; envelope, filtering, bounds and output are
 //! owned by the shared SDK. No dependency verbosity can bypass its policy.
+use nddev_device_sync_telemetry::otlp::NativeTraces;
 use nddev_device_sync_telemetry::{Config, DebugWindow, Logger};
 
 use crate::{
@@ -44,6 +45,8 @@ impl Settings {
 
 pub struct LoggingGuard {
     _logger: Logger,
+    // Declared after the logger: flush local lifecycle before closing egress.
+    _traces: Option<NativeTraces>,
     valid: bool,
 }
 impl LoggingGuard {
@@ -60,19 +63,81 @@ impl LoggingGuard {
 
 pub fn init_logging() -> Result<LoggingGuard, LoggingError> {
     let parsed = Settings::read(|key| std::env::var(key).ok());
-    let valid = parsed.is_ok();
+    let mut valid = parsed.is_ok();
     let settings =
         parsed.unwrap_or_else(|_| Settings::read(|_| None).expect("static logging defaults"));
-    let logger = nddev_device_sync_telemetry::install(settings.0).map_err(|_| LoggingError)?;
+    let traces = match telemetry_settings(|key| std::env::var(key).ok()) {
+        Ok(Some(origin)) => match NativeTraces::new(&settings.0, &origin) {
+            Ok(traces) => Some(traces),
+            Err(_) => {
+                valid = false;
+                None
+            }
+        },
+        Ok(None) => None,
+        Err(_) => {
+            valid = false;
+            None
+        }
+    };
+    let logger = if let Some(traces) = &traces {
+        nddev_device_sync_telemetry::install_with_tracer(settings.0, traces.tracer())
+    } else {
+        nddev_device_sync_telemetry::install(settings.0)
+    }
+    .map_err(|_| LoggingError)?;
+    tracing::info!(
+        module = "process",
+        event.name = "telemetry.traces.configured",
+        available = traces.is_some(),
+        outcome = "checked"
+    );
     Ok(LoggingGuard {
         _logger: logger,
+        _traces: traces,
         valid,
     })
+}
+
+fn telemetry_settings(
+    get: impl Fn(&str) -> Option<String>,
+) -> Result<Option<String>, LoggingError> {
+    let enabled = match get("NDS_TELEMETRY_ENABLED")
+        .as_deref()
+        .map(str::to_ascii_lowercase)
+        .as_deref()
+    {
+        None | Some("true" | "1" | "on") => true,
+        Some("false" | "0" | "off") => false,
+        _ => return Err(LoggingError),
+    };
+    if enabled {
+        Ok(get("NDS_OTLP_ENDPOINT"))
+    } else {
+        Ok(None)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn operator_opt_out_never_constructs_a_collector_client() {
+        assert!(
+            telemetry_settings(|name| match name {
+                "NDS_TELEMETRY_ENABLED" => Some("off".into()),
+                "NDS_OTLP_ENDPOINT" => Some("malformed unused collector".into()),
+                _ => None,
+            })
+            .unwrap()
+            .is_none()
+        );
+        assert!(telemetry_settings(|_| None).unwrap().is_none());
+        assert!(
+            telemetry_settings(|name| (name == "NDS_TELEMETRY_ENABLED").then(|| "typo".into()))
+                .is_err()
+        );
+    }
 
     #[test]
     fn debug_requires_valid_scope_duration_and_budget() {
