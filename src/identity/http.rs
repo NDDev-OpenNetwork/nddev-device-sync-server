@@ -245,13 +245,15 @@ fn page(locale: Locale, body: String) -> Response {
         Locale::En => "en",
         Locale::Ru => "ru",
     };
-    let mut response = Html(format!("<!doctype html><html lang=\"{language}\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>NDDev OpenNetwork</title></head><body>{body}<p><a href=\"https://nddev.ai\">NDDev OpenNetwork</a></p></body></html>")).into_response();
+    let mut response = Html(format!("<!doctype html><html lang=\"{language}\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width\"><title>NDDev OpenNetwork</title></head><body>{body}<p><a href=\"https://nddev.ai\" rel=\"noreferrer\">NDDev OpenNetwork</a></p></body></html>")).into_response();
     for (header, value) in [
         (
             "content-security-policy",
             "default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
         ),
-        ("referrer-policy", "no-referrer"),
+        // Native form POST needs its Origin for CSRF validation. Unlike
+        // no-referrer, strict-origin preserves it without exposing callback queries.
+        ("referrer-policy", "strict-origin"),
         ("x-frame-options", "DENY"),
         ("x-content-type-options", "nosniff"),
     ] {
@@ -517,6 +519,7 @@ mod tests {
                     .unwrap()
                     .contains("frame-ancestors 'none'")
             );
+            assert_eq!(response.headers()["referrer-policy"], "strict-origin");
             let body = String::from_utf8(
                 to_bytes(response.into_body(), 65536)
                     .await
@@ -526,6 +529,7 @@ mod tests {
             .unwrap();
             assert!(body.contains(expected) && body.contains(&format!("lang=\"{label}\"")));
             assert!(body.contains("method=\"post\"") && body.contains("name=\"csrf_token\""));
+            assert!(body.contains("href=\"https://nddev.ai\" rel=\"noreferrer\""));
             assert!(!body.contains("<script") && !body.contains(&"b".repeat(43)));
         }
         let mut headers = HeaderMap::new();
