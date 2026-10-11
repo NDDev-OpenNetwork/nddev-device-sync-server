@@ -93,7 +93,7 @@ Release deployments must instead consume the reviewed built image by digest.
 
 The server exposes `/v1/health`, `/v1/ready`, `/source` and the implemented v2
 identity/device routes, with request IDs and `Cache-Control: no-store`. Identity is
-unavailable until configured privately. `/v1/ready` requires schema version 6;
+unavailable until configured privately. `/v1/ready` requires schema version 8;
 use the explicit migrator before starting the updated runtime. The observability
 pipeline remains a separate slice.
 
@@ -156,20 +156,22 @@ alone never approves an initiating app. The app polls at most once every two
 seconds and consumes its opaque exchange capability once. An interrupted or
 failed exchange may require starting sign-in again.
 
-Both methods issue the same eight-hour owner session; at most 32 active sessions
+All three methods issue the same eight-hour owner session; at most 32 active sessions
 are retained. Session digests persist in PostgreSQL; GET `/v2/session` validates
-ownership/expiry and DELETE revokes the current session. A session does not
-recover device/vault keys. Expired challenge/session/rate state is pruned on
+ownership/expiry and DELETE revokes the current session. Vault delivery additionally requires active enrolled device proof; a session
+does not regenerate lost device or vault keys. Expired challenge/session/rate state is pruned on
 identity activity within fixed table capacities. Pending SMTP work is discarded
 on shutdown; already-delivered unexpired OTP verifiers survive restart under
 the unchanged pepper.
 
 `Accept-Language: en` or `ru` on the initial request selects email and approval
 text, defaulting to English. The locale is bound to the pending flow. Anonymous
-`/v2/auth/methods` reads cached provider state only: bounded startup/background
-checks, sixty-second refresh and failure backoff capped at five minutes.
-Stale readiness becomes unavailable. GitHub readiness is not evidence of a
-successful credential/owner exchange; prove that with an actual sign-in.
+`/v2/auth/methods` reads cached OTP/GitHub provider readiness: bounded
+startup/background checks, sixty-second refresh and failure backoff capped at
+five minutes. Passkey availability additionally queries registered owner
+credentials. Stale provider readiness becomes unavailable. GitHub readiness is
+not evidence of a successful credential/owner exchange; prove that with an
+actual sign-in.
 Authentication requires HTTPS unless the HTTP listener is loopback-only.
 
 ## Device identity
@@ -195,8 +197,10 @@ cursor. The requested limit is 1–100; each response contains at most 32 items
 to bound encoded size even for maximal Unicode names. DELETE
 `/v2/devices/{device_id}` is idempotent for an owned device and retains its row.
 If a completion response is uncertain, retain the local key and inspect the
-owned device list. Enrollment does not supply vault decryption keys, restore
-secrets or yet authorize a sync endpoint; signed sync is a separate slice.
+owned device list. Enrollment establishes device identity. Subsequent encrypted
+sync and vault-key delivery require both an active owner session and signed,
+nonce-protected requests from that unrevoked device; neither authentication nor
+enrollment alone substitutes for the other proof.
 
 ## Certificate renewal and shutdown
 
@@ -293,7 +297,17 @@ Both server and collector export opt-out apply to client feeds. Transport receip
 do not establish searchable delivery; qualify the actual OpenObserve result.
 Without the private configuration the gateway reports unavailable.
 
-## Passkey removal and schema 8
+## Passkeys and schema 8
+
+Configure `NDS_PUBLIC_ORIGIN` with the exact HTTPS origin and a DNS host, alongside
+PostgreSQL and private owner identity configuration. That host becomes the RP ID;
+IP-only origins do not enable the passkey service. Native clients open the server
+browser ceremony, compare its code with the initiating app and explicitly approve
+registration/authentication. WebAuthn requires user verification and consumes a
+bounded, single-use challenge. Registration requires an authenticated session
+issued within five minutes. Passkey sign-in is unavailable until the owner has
+registered a credential; it does not create an owner or bypass other methods.
+
 
 Schema 8 links newly issued passkey sessions to their credential. An owner can
 list fingerprints/creation times and revoke a credential through authenticated
