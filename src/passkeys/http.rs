@@ -10,10 +10,10 @@ use crate::{
 };
 use axum::{
     Json, Router,
-    extract::{DefaultBodyLimit, Extension, Query, State},
+    extract::{DefaultBodyLimit, Extension, Path, Query, State},
     http::{HeaderMap, HeaderValue},
     response::{Html, IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use nddev_device_sync_application::identity::{
     IdentityCrypto, IdentityError, IdentityStore, POLL_RATE, START_RATE,
@@ -23,6 +23,8 @@ use serde::Deserialize;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/v2/auth/passkeys/start", post(start))
+        .route("/v2/auth/passkeys", get(list))
+        .route("/v2/auth/passkeys/{id}", delete(revoke))
         .route("/v2/auth/passkeys/exchange", post(exchange))
         .route("/v2/auth/passkeys/browser", get(browser))
         .route("/v2/auth/passkeys/options", get(options))
@@ -271,4 +273,56 @@ async fn browser(
         .headers_mut()
         .insert("referrer-policy", HeaderValue::from_static("no-referrer"));
     Ok(response)
+}
+
+async fn owner(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<nddev_device_sync_application::identity::AuthenticatedSession, IdentityError> {
+    state
+        .identity
+        .as_ref()
+        .ok_or(IdentityError::Unavailable)?
+        .authenticate(bearer(headers)?, identity::now_ms()?)
+        .await
+}
+async fn list(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<dto::PasskeyList>, ApiError> {
+    let auth = owner(&state, &headers).await?;
+    let passkeys = service(&state)?
+        .list(&auth)
+        .await?
+        .into_iter()
+        .map(|(id, created)| {
+            let created_at =
+                time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(created) * 1_000_000)
+                    .map_err(|_| IdentityError::Unavailable)?
+                    .format(&time::format_description::well_known::Rfc3339)
+                    .map_err(|_| IdentityError::Unavailable)?;
+            Ok(dto::PasskeyInfo { id, created_at })
+        })
+        .collect::<Result<Vec<_>, IdentityError>>()?;
+    Ok(Json(dto::PasskeyList { passkeys }))
+}
+async fn revoke(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+) -> Result<Json<dto::PasskeyRevocation>, ApiError> {
+    let auth = owner(&state, &headers).await?;
+    let (current_session_revoked, passkey_available) = service(&state)?
+        .revoke(&auth, &id, identity::now_ms()?)
+        .await?;
+    tracing::info!(
+        module = "identity",
+        scope = "http",
+        event.name = "identity.passkey.revoked",
+        outcome = "ok"
+    );
+    Ok(Json(dto::PasskeyRevocation {
+        current_session_revoked,
+        passkey_available,
+    }))
 }

@@ -1,0 +1,510 @@
+//! Signed owner/device gateway to the separately owned observability service.
+//! Operator credentials stay server-side; no arbitrary authenticated HTTP proxy.
+use crate::{
+    AppState, config::SecretString, identity, protocol_observability as dto, sync::http::ApiError,
+};
+use axum::{
+    Json, Router,
+    body::Bytes,
+    extract::{OriginalUri, Path, Query, State},
+    http::{HeaderMap, StatusCode},
+    routing::{get, post},
+};
+use nddev_device_sync_application::sync::SyncError;
+use serde::Deserialize;
+use std::{
+    fs::OpenOptions,
+    io::Read,
+    path::{Path as FilePath, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Settings {
+    origin: String,
+    trace_origin: String,
+    ingest_token_file: PathBuf,
+    admin_token_file: PathBuf,
+}
+pub struct Gateway {
+    origin: reqwest::Url,
+    trace_origin: reqwest::Url,
+    ingest: SecretString,
+    admin: SecretString,
+    http: reqwest::Client,
+    permits: tokio::sync::Semaphore,
+}
+impl std::fmt::Debug for Gateway {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("ObservabilityGateway([REDACTED])")
+    }
+}
+fn read(path: &FilePath) -> Result<Vec<u8>, ()> {
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let mut file = options.open(path).map_err(|_| ())?;
+    let metadata = file.metadata().map_err(|_| ())?;
+    if !metadata.is_file() {
+        return Err(());
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if metadata.permissions().mode() & 0o077 != 0 {
+            return Err(());
+        }
+    }
+    let mut bytes = Vec::new();
+    file.by_ref()
+        .take(16_385)
+        .read_to_end(&mut bytes)
+        .map_err(|_| ())?;
+    if bytes.is_empty() || bytes.len() > 16_384 {
+        return Err(());
+    }
+    Ok(bytes)
+}
+fn token(path: &FilePath) -> Result<SecretString, ()> {
+    let value = String::from_utf8(read(path)?).map_err(|_| ())?;
+    let value = value.trim_end_matches(['\r', '\n']);
+    if !(32..=128).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-".contains(&byte))
+    {
+        return Err(());
+    }
+    Ok(SecretString::from_native(value.into()))
+}
+fn internal_origin(value: &str) -> Result<reqwest::Url, ()> {
+    let origin = reqwest::Url::parse(value).map_err(|_| ())?;
+    if value.len() > 2048
+        || !matches!(origin.scheme(), "http" | "https")
+        || origin.host_str().is_none()
+        || origin.path() != "/"
+        || !origin.username().is_empty()
+        || origin.password().is_some()
+        || origin.query().is_some()
+        || origin.fragment().is_some()
+    {
+        return Err(());
+    }
+    Ok(origin)
+}
+impl Gateway {
+    pub(crate) fn from_file(path: &FilePath) -> Result<Arc<Self>, ()> {
+        let settings: Settings = serde_json::from_slice(&read(path)?).map_err(|_| ())?;
+        let origin = internal_origin(&settings.origin)?;
+        let trace_origin = internal_origin(&settings.trace_origin)?;
+        Ok(Arc::new(Self {
+            origin,
+            trace_origin,
+            ingest: token(&settings.ingest_token_file)?,
+            admin: token(&settings.admin_token_file)?,
+            http: reqwest::Client::builder()
+                .no_proxy()
+                .timeout(Duration::from_secs(5))
+                .connect_timeout(Duration::from_secs(2))
+                .redirect(reqwest::redirect::Policy::none())
+                .pool_max_idle_per_host(2)
+                .build()
+                .map_err(|_| ())?,
+            permits: tokio::sync::Semaphore::new(4),
+        }))
+    }
+    async fn forward<T: serde::de::DeserializeOwned>(
+        &self,
+        path: &str,
+        body: Option<Vec<u8>>,
+        actor: &str,
+    ) -> Result<T, SyncError> {
+        let bytes = self.forward_bytes(path, body, actor).await?;
+        serde_json::from_slice(&bytes).map_err(|_| SyncError::Unavailable)
+    }
+    async fn forward_bytes(
+        &self,
+        path: &str,
+        body: Option<Vec<u8>>,
+        actor: &str,
+    ) -> Result<Vec<u8>, SyncError> {
+        let _permit = self
+            .permits
+            .try_acquire()
+            .map_err(|_| SyncError::Capacity)?;
+        let events = path == "/v2/observability/events";
+        let traces = path == "/v1/traces";
+        let token = if events { &self.ingest } else { &self.admin };
+        let mut request = self.http.request(
+            if body.is_some() {
+                reqwest::Method::POST
+            } else {
+                reqwest::Method::GET
+            },
+            (if traces {
+                &self.trace_origin
+            } else {
+                &self.origin
+            })
+            .join(path)
+            .map_err(|_| SyncError::Invalid)?,
+        );
+        if !traces {
+            request = request
+                .bearer_auth(token.expose())
+                .header("x-nds-actor", actor);
+        }
+        if let Some(body) = body {
+            request = request
+                .header(
+                    "content-type",
+                    if traces {
+                        "application/x-protobuf"
+                    } else if events {
+                        "application/x-ndjson"
+                    } else {
+                        "application/json"
+                    },
+                )
+                .body(body);
+        }
+        let mut response = request.send().await.map_err(|_| SyncError::Unavailable)?;
+        if !response.status().is_success() {
+            return Err(match response.status() {
+                StatusCode::BAD_REQUEST => SyncError::Invalid,
+                StatusCode::CONFLICT => SyncError::Revision,
+                _ => SyncError::Unavailable,
+            });
+        }
+        if response
+            .content_length()
+            .is_some_and(|length| length > 65_536)
+        {
+            return Err(SyncError::Unavailable);
+        }
+        let mut bytes = Vec::new();
+        while let Some(chunk) = response.chunk().await.map_err(|_| SyncError::Unavailable)? {
+            if bytes.len() + chunk.len() > 65_536 {
+                return Err(SyncError::Unavailable);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        Ok(bytes)
+    }
+}
+fn gateway(state: &AppState) -> Result<&Gateway, SyncError> {
+    state
+        .config
+        .observability
+        .as_deref()
+        .ok_or(SyncError::Unavailable)
+}
+async fn authorize(
+    state: &AppState,
+    headers: &HeaderMap,
+    method: &str,
+    uri: &axum::http::Uri,
+    body: &[u8],
+) -> Result<
+    (
+        nddev_device_sync_application::sync::AuthenticatedSession,
+        nddev_device_sync_application::sync::SignedRequest,
+    ),
+    SyncError,
+> {
+    gateway(state)?;
+    let now = identity::now_ms().map_err(|_| SyncError::Unavailable)?;
+    let (auth, signed) =
+        crate::sync::http::authorize(state, headers, method, uri, body, now).await?;
+    tokio::time::timeout(crate::database::DATABASE_TIMEOUT, async {
+        let identity = crate::identity::store::Store::new(
+            state.database.clone().ok_or(SyncError::Unavailable)?,
+        );
+        let mut tx = identity
+            .transaction()
+            .await
+            .map_err(|_| SyncError::Unavailable)?;
+        let outcome = crate::sync::store::authorize(
+            &mut tx,
+            &auth,
+            &signed,
+            now.max(crate::identity::now_ms().map_err(|_| SyncError::Unavailable)?),
+        )
+        .await;
+        crate::sync::store::finish(tx, outcome).await
+    })
+    .await
+    .map_err(|_| SyncError::Unavailable)??;
+    Ok((auth, signed))
+}
+fn identifier(value: &str) -> bool {
+    value.len() <= 128
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"._:-".contains(&byte))
+}
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/v2/observability/events", post(events))
+        .route("/v2/observability/traces", post(traces))
+        .route("/v2/observability/status", get(status))
+        .route("/v2/observability/incidents", get(incidents))
+        .route(
+            "/v2/observability/incidents/{id}/acknowledge",
+            post(acknowledge),
+        )
+        .route("/v2/observability/incidents/{id}/silence", post(silence))
+}
+async fn events(
+    State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<dto::IngressReceipt>, ApiError> {
+    if headers
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        != Some("application/x-ndjson")
+        || body.is_empty()
+        || body.len() > 65_536
+    {
+        return Err(SyncError::Invalid.into());
+    }
+    let (auth, signed) = authorize(&state, &headers, "POST", &uri, &body).await?;
+    if !state.config.telemetry_enabled {
+        return Ok(Json(disabled()));
+    }
+    let mut normalized = Vec::new();
+    let mut count = 0;
+    for line in body
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+    {
+        if count >= 32 {
+            return Err(SyncError::Invalid.into());
+        }
+        let mut value: serde_json::Value =
+            serde_json::from_slice(line).map_err(|_| SyncError::Invalid)?;
+        nddev_device_sync_telemetry::decode_event(value.clone()).map_err(|_| SyncError::Invalid)?;
+        if !matches!(
+            value["service.name"].as_str(),
+            Some("nddev-device-sync-client" | "nddev-device-sync-agent")
+        ) {
+            return Err(SyncError::Invalid.into());
+        }
+        for (key, expected) in [
+            ("user.id", auth.session.owner.user_id.as_str()),
+            ("tenant.id", auth.session.owner.tenant_id.as_str()),
+            ("device.id", signed.device.as_str()),
+        ] {
+            if value
+                .get(key)
+                .is_some_and(|current| current.as_str() != Some(expected))
+            {
+                return Err(SyncError::Denied.into());
+            }
+            value[key] = expected.into();
+        }
+        let instance = value["producer.instance_id"]
+            .as_str()
+            .ok_or(SyncError::Invalid)?;
+        let namespaced = serde_json::to_vec(&(
+            auth.session.owner.user_id.as_str(),
+            auth.session.owner.tenant_id.as_str(),
+            signed.device.as_str(),
+            instance,
+        ))
+        .map_err(|_| SyncError::Invalid)?;
+        value["producer.instance_id"] = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, &namespaced)
+            .to_string()
+            .into();
+        nddev_device_sync_telemetry::decode_event(value.clone()).map_err(|_| SyncError::Invalid)?;
+        serde_json::to_writer(&mut normalized, &value).map_err(|_| SyncError::Invalid)?;
+        normalized.push(b'\n');
+        count += 1;
+    }
+    if count == 0 || normalized.len() > 75_000 {
+        return Err(SyncError::Invalid.into());
+    }
+    let receipt: dto::IngressReceipt = gateway(&state)?
+        .forward(
+            "/v2/observability/events",
+            Some(normalized),
+            signed.device.as_str(),
+        )
+        .await?;
+    if receipt.accepted < 0
+        || receipt.duplicates < 0
+        || i64::from(receipt.accepted) + i64::from(receipt.duplicates) != i64::from(count)
+    {
+        return Err(SyncError::Unavailable.into());
+    }
+    tracing::info!(
+        module = "telemetry",
+        scope = "http",
+        event.name = "telemetry.client.accepted",
+        accepted_count = receipt.accepted,
+        duplicate_count = receipt.duplicates,
+        outcome = "accepted"
+    );
+    Ok(Json(receipt))
+}
+fn disabled() -> dto::IngressReceipt {
+    dto::IngressReceipt {
+        accepted: 0,
+        duplicates: 0,
+        export_mode: dto::ExportMode::Disabled,
+    }
+}
+async fn traces(
+    State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    body: Bytes,
+) -> Result<Json<dto::IngressReceipt>, ApiError> {
+    use nddev_device_sync_telemetry::client_traces::{AuthenticatedSource, authenticated_batch};
+    use prost::Message;
+    if headers
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        != Some("application/x-protobuf")
+        || body.is_empty()
+        || body.len() > 65_536
+    {
+        return Err(SyncError::Invalid.into());
+    }
+    let (auth, signed) = authorize(&state, &headers, "POST", &uri, &body).await?;
+    if !state.config.telemetry_enabled {
+        return Ok(Json(disabled()));
+    }
+    let gateway = gateway(&state)?;
+    // The collector owns its export opt-out. Native traces must observe it too,
+    // even though their binary transport goes directly to the internal Vector.
+    let status: dto::ObservabilityStatus = gateway
+        .forward("/v2/observability/status", None, signed.device.as_str())
+        .await?;
+    if matches!(status.export_mode, dto::ExportMode::Disabled) {
+        return Ok(Json(disabled()));
+    }
+    let now = identity::now_ms().map_err(|_| SyncError::Unavailable)?;
+    let (body, count) = authenticated_batch(
+        &body,
+        AuthenticatedSource {
+            tenant: auth.session.owner.tenant_id.as_str(),
+            user: auth.session.owner.user_id.as_str(),
+            device: signed.device.as_str(),
+        },
+        now.checked_mul(1_000_000).ok_or(SyncError::Unavailable)?,
+    )
+    .map_err(|_| SyncError::Invalid)?;
+    let response = gateway
+        .forward_bytes("/v1/traces", Some(body), signed.device.as_str())
+        .await?;
+    let response =
+        opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceResponse::decode(
+            response.as_slice(),
+        )
+        .map_err(|_| SyncError::Unavailable)?;
+    if response
+        .partial_success
+        .is_some_and(|partial| partial.rejected_spans != 0 || !partial.error_message.is_empty())
+    {
+        return Err(SyncError::Unavailable.into());
+    }
+    Ok(Json(dto::IngressReceipt {
+        accepted: count as i32,
+        duplicates: 0,
+        export_mode: dto::ExportMode::Enabled,
+    }))
+}
+async fn status(
+    State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+) -> Result<Json<dto::ObservabilityStatus>, ApiError> {
+    let (_, signed) = authorize(&state, &headers, "GET", &uri, &[]).await?;
+    let mut status: dto::ObservabilityStatus = gateway(&state)?
+        .forward("/v2/observability/status", None, signed.device.as_str())
+        .await?;
+    if !state.config.telemetry_enabled {
+        status.export_mode = dto::ExportMode::Disabled;
+    }
+    Ok(Json(status))
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Page {
+    #[serde(default)]
+    after: String,
+}
+async fn incidents(
+    State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    Query(page): Query<Page>,
+) -> Result<Json<dto::IncidentPage>, ApiError> {
+    if !identifier(&page.after) {
+        return Err(SyncError::Invalid.into());
+    }
+    let (_, signed) = authorize(&state, &headers, "GET", &uri, &[]).await?;
+    Ok(Json(
+        gateway(&state)?
+            .forward(
+                &format!("/v2/observability/incidents?limit=50&after={}", page.after),
+                None,
+                signed.device.as_str(),
+            )
+            .await?,
+    ))
+}
+async fn action(
+    state: &AppState,
+    uri: axum::http::Uri,
+    headers: HeaderMap,
+    id: String,
+    body: Bytes,
+    kind: &str,
+) -> Result<Json<dto::Incident>, ApiError> {
+    if id.is_empty() || !identifier(&id) || body.len() > 1024 {
+        return Err(SyncError::Invalid.into());
+    }
+    if kind == "silence" {
+        serde_json::from_slice::<dto::SilenceAction>(&body).map_err(|_| SyncError::Invalid)?;
+    } else {
+        serde_json::from_slice::<dto::IncidentAction>(&body).map_err(|_| SyncError::Invalid)?;
+    }
+    let (_, signed) = authorize(state, &headers, "POST", &uri, &body).await?;
+    Ok(Json(
+        gateway(state)?
+            .forward(
+                &format!("/v2/observability/incidents/{id}/{kind}"),
+                Some(body.to_vec()),
+                signed.device.as_str(),
+            )
+            .await?,
+    ))
+}
+async fn acknowledge(
+    State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<dto::Incident>, ApiError> {
+    action(&state, uri, headers, id, body, "acknowledge").await
+}
+async fn silence(
+    State(state): State<AppState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    Path(id): Path<String>,
+    body: Bytes,
+) -> Result<Json<dto::Incident>, ApiError> {
+    action(&state, uri, headers, id, body, "silence").await
+}

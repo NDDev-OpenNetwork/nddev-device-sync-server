@@ -64,6 +64,28 @@ impl Service {
         flows.retain(|_, flow| flow.deadline > Instant::now());
         Ok(flows)
     }
+    pub async fn list(
+        &self,
+        auth: &AuthenticatedSession,
+    ) -> Result<Vec<(String, u64)>, IdentityError> {
+        self.store.list(auth).await
+    }
+    pub async fn revoke(
+        &self,
+        auth: &AuthenticatedSession,
+        id: &str,
+        now: u64,
+    ) -> Result<(bool, bool), IdentityError> {
+        if id.len() != 64
+            || !id
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            || !fresh(auth, now)
+        {
+            return Err(IdentityError::Denied);
+        }
+        self.store.revoke(auth, id, now).await
+    }
     pub async fn available(&self) -> Result<bool, IdentityError> {
         Ok(!self
             .store
@@ -77,13 +99,10 @@ impl Service {
         now: u64,
     ) -> Result<crate::protocol_v2::PasskeyStart, IdentityError> {
         let owner = self.store.owner().await?;
-        if auth.as_ref().is_some_and(|auth| {
-            auth.session.owner != owner
-                || now
-                    .saturating_add(SESSION_LIFETIME_MS)
-                    .saturating_sub(auth.session.expires_at_ms)
-                    > 300_000
-        }) {
+        if auth
+            .as_ref()
+            .is_some_and(|auth| auth.session.owner != owner || !fresh(auth, now))
+        {
             return Err(IdentityError::Denied);
         }
         let keys = self.store.credentials(&owner).await?;
@@ -316,6 +335,14 @@ impl Service {
         }
     }
 }
+fn fresh(auth: &AuthenticatedSession, now: u64) -> bool {
+    auth.session.active(now)
+        && auth
+            .session
+            .expires_at_ms
+            .checked_sub(SESSION_LIFETIME_MS)
+            .is_some_and(|issued| now >= issued && now - issued <= 300_000)
+}
 fn opaque(value: &str) -> bool {
     value.len() == 43
         && value
@@ -327,4 +354,30 @@ pub enum Exchange {
     Pending,
     Registered,
     Session(IssuedSession),
+}
+
+#[cfg(test)]
+mod freshness_tests {
+    use super::*;
+    #[test]
+    fn credential_changes_require_a_recent_nonfuture_active_session() {
+        let issued = 1_000_000;
+        let auth = AuthenticatedSession {
+            session: Session::new(
+                Owner {
+                    user_id: UserId::new("owner").unwrap(),
+                    tenant_id: TenantId::new("tenant").unwrap(),
+                },
+                AuthMethod::EmailOtp,
+                issued,
+            )
+            .unwrap(),
+            binding: ProtectedDigest([0; 32]),
+        };
+        assert!(!fresh(&auth, issued - 1));
+        assert!(fresh(&auth, issued));
+        assert!(fresh(&auth, issued + 300_000));
+        assert!(!fresh(&auth, issued + 300_001));
+        assert!(!fresh(&auth, issued + SESSION_LIFETIME_MS));
+    }
 }

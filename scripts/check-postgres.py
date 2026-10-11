@@ -18,6 +18,7 @@ from telemetry_acceptance import TelemetryValidator
 
 arguments = argparse.ArgumentParser(description="Real isolated PostgreSQL/SMTP acceptance or a bounded client fixture")
 arguments.add_argument("--fixture-receipt", type=Path)
+arguments.add_argument("--observability-config", type=Path, help="Explicit owned loopback collector fixture configuration")
 arguments.add_argument("--fixture-seconds", type=int, default=1200)
 arguments.add_argument("--fixture-passkeys", action="store_true", help="Use the localhost secure browser origin for owned passkey acceptance")
 options = arguments.parse_args()
@@ -101,6 +102,15 @@ try:
             path.write_text(f"postgres://{role}:{password}@127.0.0.1:{host_port}/nds\n")
             urls[kind] = str(path)
         env = {key: value for key, value in os.environ.items() if not key.startswith(("NDS_", "DATABASE_URL")) and key != "RUST_LOG"}
+        if options.observability_config is not None:
+            config = options.observability_config.resolve()
+            if not options.fixture_receipt or not options.observability_config.is_absolute() or config.is_relative_to(ROOT):
+                arguments.error("observability configuration requires an owned fixture and absolute private path")
+            from urllib.parse import urlparse
+            settings = json.loads(config.read_text())
+            if any(urlparse(settings[key]).scheme != "http" or urlparse(settings[key]).hostname != "127.0.0.1" for key in ["origin", "trace_origin"]):
+                arguments.error("acceptance collector must use explicit loopback origins")
+            env["NDS_OBSERVABILITY_CONFIG_FILE"] = str(config)
         env["DATABASE_URL_FILE"] = urls["runtime"]
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
@@ -120,7 +130,7 @@ try:
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
         for _ in range(2):
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "7"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "8"
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0

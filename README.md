@@ -12,11 +12,13 @@ The current server provides:
 - PostgreSQL readiness and an explicit migration command with a separate identity;
 - direct Rust/rustls HTTPS, bounded connection drain and safe certificate reload;
 - finite connection/handler admission and scoped, expiring debug diagnostics;
-- email OTP and GitHub PKCE for one explicitly configured owner;
+- email OTP, GitHub PKCE and browser WebAuthn passkeys for one explicitly configured owner;
+- bounded passkey metadata and fresh-session credential/session revocation;
 - browser pairing approval, expiring/revocable sessions and bounded abuse controls;
 - session-bound Ed25519 device enrollment, paged owner inventory and revocation;
 - signed encrypted sync operations, immutable idempotency receipts and explicit conflicts;
 - automatic owner-key delivery to authenticated active devices, with encrypted PostgreSQL key envelopes;
+- signed client event/native OTLP ingress, operator delivery status and incident actions;
 - generated wire types and immutable core/protocol source pins;
 - compatible health metadata without a speculative core module registry.
 
