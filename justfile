@@ -29,4 +29,4 @@ protocol-generate:
 # Real PostgreSQL + SMTP mailbox, tmpfs data and generated synthetic identities.
 integration-postgres:
     cargo build --locked --jobs 4
-    python3 scripts/check-postgres.py
+    python3 scripts/check-postgres.py --fixture-passkeys

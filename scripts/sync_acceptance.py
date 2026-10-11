@@ -10,13 +10,15 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlsplit
 import uuid
 from vault_acceptance import check_vault
 
 def b64(value): return base64.urlsafe_b64encode(value).decode().rstrip('=')
 
 def check_sync(request, token, restart, directory, sql, origin):
-    assert origin.startswith('http://127.0.0.1:')
+    parsed = urlsplit(origin)
+    assert parsed.scheme == 'http' and parsed.hostname in ('127.0.0.1', 'localhost') and parsed.port
     directory=Path(directory)/'sync';directory.mkdir(mode=0o700)
     sensitive=[]
     def openssl(*args):

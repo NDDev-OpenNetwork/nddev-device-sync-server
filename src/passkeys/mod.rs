@@ -80,9 +80,11 @@ impl Service {
             || !id
                 .bytes()
                 .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
-            || !fresh(auth, now)
         {
             return Err(IdentityError::Denied);
+        }
+        if !auth.session.recently_authenticated(now) {
+            return Err(IdentityError::RecentAuthenticationRequired);
         }
         self.store.revoke(auth, id, now).await
     }
@@ -101,9 +103,15 @@ impl Service {
         let owner = self.store.owner().await?;
         if auth
             .as_ref()
-            .is_some_and(|auth| auth.session.owner != owner || !fresh(auth, now))
+            .is_some_and(|auth| auth.session.owner != owner)
         {
             return Err(IdentityError::Denied);
+        }
+        if auth
+            .as_ref()
+            .is_some_and(|auth| !auth.session.recently_authenticated(now))
+        {
+            return Err(IdentityError::RecentAuthenticationRequired);
         }
         let keys = self.store.credentials(&owner).await?;
         let (options, challenge) = if let Some(auth) = auth {
@@ -335,14 +343,6 @@ impl Service {
         }
     }
 }
-fn fresh(auth: &AuthenticatedSession, now: u64) -> bool {
-    auth.session.active(now)
-        && auth
-            .session
-            .expires_at_ms
-            .checked_sub(SESSION_LIFETIME_MS)
-            .is_some_and(|issued| now >= issued && now - issued <= 300_000)
-}
 fn opaque(value: &str) -> bool {
     value.len() == 43
         && value
@@ -354,30 +354,4 @@ pub enum Exchange {
     Pending,
     Registered,
     Session(IssuedSession),
-}
-
-#[cfg(test)]
-mod freshness_tests {
-    use super::*;
-    #[test]
-    fn credential_changes_require_a_recent_nonfuture_active_session() {
-        let issued = 1_000_000;
-        let auth = AuthenticatedSession {
-            session: Session::new(
-                Owner {
-                    user_id: UserId::new("owner").unwrap(),
-                    tenant_id: TenantId::new("tenant").unwrap(),
-                },
-                AuthMethod::EmailOtp,
-                issued,
-            )
-            .unwrap(),
-            binding: ProtectedDigest([0; 32]),
-        };
-        assert!(!fresh(&auth, issued - 1));
-        assert!(fresh(&auth, issued));
-        assert!(fresh(&auth, issued + 300_000));
-        assert!(!fresh(&auth, issued + 300_001));
-        assert!(!fresh(&auth, issued + SESSION_LIFETIME_MS));
-    }
 }

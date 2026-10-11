@@ -1,12 +1,12 @@
 id: server
 name: nddev-device-sync-server
-version: 0.0.1-alpha.15
+version: 0.0.1-alpha.16
 channel: alpha
 license: AGPL-3.0-only
 repository: NDDev-OpenNetwork/nddev-device-sync-server
 standards_lock: standarts.lock
-core_commit: a5ca60295153690d9f6bee18095dd067c9095f18
-protocol_commit: 6af21c7294ecbaf8b8abca603c275cdbc4e41137
+core_commit: fbe50f9994dde44f26ba803ac82c5d2ecfa1cacd
+protocol_commit: 2d02bfca16266e7c343b024807362c7cbbf8f7c6
 telemetry_commit: 469a77aea2e234b50d0554625a761d52985e7cb0
 platforms:
   - linux

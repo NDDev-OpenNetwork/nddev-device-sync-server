@@ -53,6 +53,7 @@ pub struct ServerConfig {
     pub identity: Option<crate::identity::config::AuthConfig>,
     pub observability: Option<std::sync::Arc<crate::observability::Gateway>>,
     pub vault_wrapping_key: Option<std::sync::Arc<crate::vault::crypto::WrappingKey>>,
+    pub web_assets: Option<std::sync::Arc<crate::web::WebAssets>>,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -81,6 +82,8 @@ pub enum ConfigError {
     VaultKey,
     #[error("invalid observability gateway configuration")]
     Observability,
+    #[error("invalid web asset manifest or bundle")]
+    WebAssets,
 }
 
 impl ServerConfig {
@@ -102,6 +105,12 @@ impl ServerConfig {
             _ => return Err(ConfigError::TlsPair),
         };
         let config = Self {
+            web_assets: get("NDS_WEB_ROOT")
+                .map(|path| {
+                    crate::web::WebAssets::load(std::path::Path::new(&path))
+                        .map_err(|_| ConfigError::WebAssets)
+                })
+                .transpose()?,
             observability: get("NDS_OBSERVABILITY_CONFIG_FILE")
                 .map(|path| {
                     crate::observability::Gateway::from_file(std::path::Path::new(&path))
@@ -133,7 +142,10 @@ impl ServerConfig {
                 .map(|path| crate::vault::crypto::WrappingKey::read(&path).map(std::sync::Arc::new))
                 .transpose()?,
         };
-        if config.identity.is_some() && config.tls.is_none() && !config.addr.ip().is_loopback() {
+        if (config.identity.is_some() || config.web_assets.is_some())
+            && config.tls.is_none()
+            && !config.addr.ip().is_loopback()
+        {
             return Err(ConfigError::IdentityHttpsRequired);
         }
         Ok(config)

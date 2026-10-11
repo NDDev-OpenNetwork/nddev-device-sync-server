@@ -21,6 +21,7 @@ arguments.add_argument("--fixture-receipt", type=Path)
 arguments.add_argument("--observability-config", type=Path, help="Explicit owned loopback collector fixture configuration")
 arguments.add_argument("--fixture-seconds", type=int, default=1200)
 arguments.add_argument("--fixture-passkeys", action="store_true", help="Use the localhost secure browser origin for owned passkey acceptance")
+arguments.add_argument("--fixture-web-root", type=Path, help="Owned manifest-verified browser test bundle, served by the real server")
 options = arguments.parse_args()
 if not 60 <= options.fixture_seconds <= 3600:
     arguments.error("fixture lifetime must be 60..3600 seconds")
@@ -102,6 +103,13 @@ try:
             path.write_text(f"postgres://{role}:{password}@127.0.0.1:{host_port}/nds\n")
             urls[kind] = str(path)
         env = {key: value for key, value in os.environ.items() if not key.startswith(("NDS_", "DATABASE_URL")) and key != "RUST_LOG"}
+        if options.fixture_web_root is not None:
+            web_root = options.fixture_web_root.resolve()
+            if not options.fixture_receipt or not options.fixture_web_root.is_absolute() or web_root.is_relative_to(ROOT):
+                arguments.error("browser assets require an owned fixture and absolute private bundle path")
+            if not (web_root / "nds-assets.json").is_file():
+                arguments.error("browser fixture bundle requires the ordinary production asset manifest")
+            env["NDS_WEB_ROOT"] = str(web_root)
         if options.observability_config is not None:
             config = options.observability_config.resolve()
             if not options.fixture_receipt or not options.observability_config.is_absolute() or config.is_relative_to(ROOT):

@@ -111,6 +111,7 @@ async fn https_preserves_headers_and_only_reloads_valid_pairs() {
         identity: None,
         vault_wrapping_key: None,
         observability: None,
+        web_assets: None,
     })
     .await
     .unwrap();

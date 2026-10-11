@@ -19,6 +19,7 @@ from a region must be measured there; direct DNS cannot guarantee routing.
 | `NDS_MAX_REQUESTS` | Active handlers across all connections; default 64, range 1–1024 |
 | `NDS_ENVIRONMENT` | Non-secret deployment label for every local event; default `self-hosted` |
 | `NDS_PUBLIC_ORIGIN` | Exact HTTPS service origin used to verify signed device requests |
+| `NDS_WEB_ROOT` | Optional absolute path to an immutable browser artifact with `nds-assets.json`; absent means API-only serving |
 | `NDS_OTLP_ENDPOINT` | Optional operator-owned collector origin for native OTLP/HTTP traces; no credentials in the URL |
 
 Absent TLS configuration enables HTTP for local development. A partial or invalid
@@ -328,3 +329,17 @@ request-origin checks and device proof remain independent. Native bearer clients
 retain their wire format. Qualify updated native clients that understand the `web`
 platform before enrolling browser devices. This adapter is not the Flutter web
 artifact or proof of browser offline/storage qualification.
+
+Passkey registration and removal require authentication within the existing
+five-minute window. A valid older session receives `403 recent_authentication_required`
+for these actions and remains usable for ordinary session and vault operations.
+
+The optional web artifact is served on this same origin. Its manifest contains
+`schema_version: 1` and a `files` array of relative `path`, lowercase SHA-256
+`sha256` and exact `bytes`. Startup verifies and loads only those files, requires
+`index.html`, and fails on mismatch; extra filesystem files are never served.
+Limits are 4096 entries, 64 MiB per file and 128 MiB total. Keep the artifact
+directory operator-owned and immutable while the process starts. Replace it
+only through an explicitly reviewed artifact update and process restart.
+API paths have no HTML fallback. CSP restricts executable and network resources
+to this origin; source maps and runtime credentials are not web assets.

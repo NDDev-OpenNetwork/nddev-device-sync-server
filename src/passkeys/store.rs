@@ -64,7 +64,7 @@ impl Store {
                 .bind(auth.binding.0.as_slice()).bind(auth.session.owner.user_id.as_str()).bind(auth.session.owner.tenant_id.as_str()).bind(i64::try_from(now).map_err(unavailable)?)
                 .fetch_optional(&mut *tx).await.map_err(unavailable)?;
             let (credential, method) = current.ok_or(IdentityError::Denied)?;
-            if !super::fresh(auth, now) { return Err(IdentityError::Denied); }
+            if !auth.session.recently_authenticated(now) { return Err(IdentityError::RecentAuthenticationRequired); }
             let keys: Vec<Vec<u8>> = sqlx::query_scalar("SELECT credential_id FROM nds_passkeys WHERE user_id=$1 AND tenant_id=$2 LIMIT 17")
                 .bind(auth.session.owner.user_id.as_str()).bind(auth.session.owner.tenant_id.as_str()).fetch_all(&mut *tx).await.map_err(unavailable)?;
             if keys.len() > 16 { return Err(IdentityError::Capacity); }
@@ -95,9 +95,10 @@ impl Store {
         let valid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM nds_sessions WHERE token_digest=$1 AND user_id=$2 AND tenant_id=$3 AND expires_at_ms>$4)")
             .bind(auth.binding.0.as_slice()).bind(auth.session.owner.user_id.as_str()).bind(auth.session.owner.tenant_id.as_str()).bind(i64::try_from(now).map_err(|_| IdentityError::InvalidInput)?)
             .fetch_one(&mut *tx).await.map_err(unavailable)?;
-        if !valid || !super::fresh(auth, now) {
+        if !valid {
             return Err(IdentityError::Denied);
         }
+        if !auth.session.recently_authenticated(now) { return Err(IdentityError::RecentAuthenticationRequired); }
         let count: i64 = sqlx::query_scalar(
             "SELECT count(*) FROM nds_passkeys WHERE user_id=$1 AND tenant_id=$2",
         )
