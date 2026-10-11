@@ -17,6 +17,7 @@ pub mod sync;
 mod telemetry_test;
 pub mod transport;
 pub mod vault;
+pub mod web;
 
 use std::{
     sync::Arc,
@@ -143,6 +144,7 @@ impl AppState {
                 identity: None,
                 vault_wrapping_key: None,
                 observability: None,
+                web_assets: None,
             },
             database: None,
             identity: None,
@@ -182,7 +184,7 @@ struct SourceResponse {
 }
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
+    let routes = Router::new()
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
         .route("/source", get(source))
@@ -192,7 +194,15 @@ pub fn router(state: AppState) -> Router {
         .merge(sync::routes())
         .merge(vault::routes())
         .merge(passkeys::http::routes())
-        .merge(observability::routes())
+        .merge(observability::routes());
+    let routes = if state.config.web_assets.is_some() {
+        routes
+            .route("/", get(web::index))
+            .route("/{*asset}", get(web::asset))
+    } else {
+        routes
+    };
+    routes
         .layer(DefaultBodyLimit::max(65_536))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(
@@ -208,6 +218,13 @@ async fn request_trace(State(state): State<AppState>, request: Request, next: Ne
         .get::<MatchedPath>()
         .map(MatchedPath::as_str)
         .unwrap_or("unmatched");
+    // The router wildcard is a template, never an actual asset path. Keep the
+    // canonical bounded HTTP span grammar shared with the telemetry SDK.
+    let route = if route == "/{*asset}" {
+        "/{asset}"
+    } else {
+        route
+    };
     let method = match request.method().as_str() {
         method @ ("GET" | "HEAD" | "POST" | "PUT" | "DELETE" | "OPTIONS" | "PATCH" | "CONNECT"
         | "TRACE") => method,

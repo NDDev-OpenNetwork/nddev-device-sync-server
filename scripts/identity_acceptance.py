@@ -269,7 +269,7 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             assert server.returncode == 0
             server = start()
 
-        sensitive += check_sync(request, session_issued["session_token"], restart_enrollment, directory, sql, f"http://127.0.0.1:{port}")
+        sensitive += check_sync(request, session_issued["session_token"], restart_enrollment, directory, sql, f"http://{host}:{port}")
         sensitive += check_enrollment(request, session_issued["session_token"], second_session, restart_enrollment, directory, sql)
         expired_logout = second_session()
         sensitive.append(expired_logout)
@@ -286,6 +286,18 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         assert len(messages()) == mail_count
         assert request("/v2/auth/github/start", {})[0] == 503
         sensitive += check_browser(f"http://{host}:{port}", owner, code, messages, sql)
+        if fixture_passkeys:
+            recent = second_session()
+            sensitive.append(recent)
+            # Only this owned synthetic session is aged. The real Rust service
+            # must deny the sensitive action while retaining ordinary identity.
+            sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms-360000")
+            assert request("/v2/session", token=recent)[0] == 200
+            assert request("/v2/auth/passkeys/start", {"registration": True}, token=recent) == (403, {"error": "recent_authentication_required"})
+            assert request("/v2/auth/passkeys/" + "0"*64, method="DELETE", token=recent) == (403, {"error": "recent_authentication_required"})
+            assert request("/v2/session", token=recent)[0] == 200
+            assert request("/v2/session", method="DELETE", token=recent)[0] == 204
+            print("Recent-authentication scope passed: aged valid session retains ordinary access after credential-management rejection.")
         sql("DELETE FROM nds_auth_limits; DELETE FROM nds_email_challenges;")
         command("docker", "stop", "--time", "5", mailbox)
         created = False
