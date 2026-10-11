@@ -312,7 +312,7 @@ async fn revoke(
     Path(id): Path<String>,
 ) -> Result<Json<dto::PasskeyRevocation>, ApiError> {
     let auth = owner(&state, &headers).await?;
-    let current_session_revoked = service(&state)?
+    let (current_session_revoked, passkey_available) = service(&state)?
         .revoke(&auth, &id, identity::now_ms()?)
         .await?;
     tracing::info!(
@@ -323,5 +323,6 @@ async fn revoke(
     );
     Ok(Json(dto::PasskeyRevocation {
         current_session_revoked,
+        passkey_available,
     }))
 }

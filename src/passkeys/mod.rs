@@ -75,7 +75,7 @@ impl Service {
         auth: &AuthenticatedSession,
         id: &str,
         now: u64,
-    ) -> Result<bool, IdentityError> {
+    ) -> Result<(bool, bool), IdentityError> {
         if id.len() != 64
             || !id
                 .bytes()

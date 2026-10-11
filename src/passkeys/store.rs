@@ -55,7 +55,7 @@ impl Store {
         auth: &AuthenticatedSession,
         id: &str,
         now: u64,
-    ) -> Result<bool, IdentityError> {
+    ) -> Result<(bool, bool), IdentityError> {
         bounded(async {
             let identity = crate::identity::store::Store::new(self.0.clone());
             let mut tx = identity.transaction().await?;
@@ -68,7 +68,9 @@ impl Store {
             let keys: Vec<Vec<u8>> = sqlx::query_scalar("SELECT credential_id FROM nds_passkeys WHERE user_id=$1 AND tenant_id=$2 LIMIT 17")
                 .bind(auth.session.owner.user_id.as_str()).bind(auth.session.owner.tenant_id.as_str()).fetch_all(&mut *tx).await.map_err(unavailable)?;
             if keys.len() > 16 { return Err(IdentityError::Capacity); }
-            let Some(key) = keys.into_iter().find(|key| fingerprint(key) == id) else { tx.commit().await.map_err(unavailable)?; return Ok(false); };
+            let available_before = !keys.is_empty();
+            let available_after = keys.len() > 1;
+            let Some(key) = keys.into_iter().find(|key| fingerprint(key) == id) else { tx.commit().await.map_err(unavailable)?; return Ok((false, available_before)); };
             let revoked = credential.as_ref() == Some(&key) || method == "passkey" && credential.is_none();
             // Pre-schema8 sessions have no proven credential link. Do not leave
             // them usable after the owner explicitly removes a passkey.
@@ -77,7 +79,7 @@ impl Store {
             sqlx::query("DELETE FROM nds_passkeys WHERE credential_id=$1 AND user_id=$2 AND tenant_id=$3")
                 .bind(key).bind(auth.session.owner.user_id.as_str()).bind(auth.session.owner.tenant_id.as_str()).execute(&mut *tx).await.map_err(unavailable)?;
             tx.commit().await.map_err(unavailable)?;
-            Ok(revoked)
+            Ok((revoked, available_after))
         }).await
     }
     pub async fn register(

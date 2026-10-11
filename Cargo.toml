@@ -10,7 +10,7 @@ build = "build.rs"
 [dependencies]
 prost = "0.14"
 opentelemetry-proto = { version = "0.33.1", default-features = false, features = ["gen-tonic-messages", "trace"] }
-nddev-device-sync-http-signatures = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-protocol.git", rev = "dbafb78c3ac133a31e465c9ac68215ee7cae3954" }
+nddev-device-sync-http-signatures = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-protocol.git", rev = "11d1904cc80e97c8938868bb1a098ee3fded4c6a" }
 axum = "0.8.9"
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
