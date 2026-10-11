@@ -92,6 +92,7 @@ pub fn platform(value: DevicePlatform) -> &'static str {
         DevicePlatform::Windows => "windows",
         DevicePlatform::Ios => "ios",
         DevicePlatform::Android => "android",
+        DevicePlatform::Web => "web",
     }
 }
 fn device(row: &PgRow) -> Result<Device, DeviceError> {
@@ -110,6 +111,7 @@ fn device(row: &PgRow) -> Result<Device, DeviceError> {
             "windows" => DevicePlatform::Windows,
             "ios" => DevicePlatform::Ios,
             "android" => DevicePlatform::Android,
+            "web" => DevicePlatform::Web,
             _ => return Err(DeviceError::Unavailable),
         },
         name: DeviceName::new(row.try_get("display_name").map_err(unavailable)?)

@@ -86,6 +86,7 @@ async fn start(
 async fn exchange(
     State(state): State<AppState>,
     Extension(source): Extension<PeerAddress>,
+    browser: Option<Extension<crate::browser::BrowserRequest>>,
     Json(input): Json<dto::GithubExchangeRequest>,
 ) -> Result<Response, ApiError> {
     let now = identity::now_ms()?;
@@ -108,7 +109,7 @@ async fn exchange(
                 retry_after_seconds: 0,
             })
             .into_response(),
-            Exchange::Session(session) => identity::http::issued(session)?.into_response(),
+            Exchange::Session(session) => identity::http::issued(session, browser.is_some())?,
         },
     )
 }
@@ -310,7 +311,8 @@ async fn revoke(
     State(state): State<AppState>,
     headers: HeaderMap,
     Path(id): Path<String>,
-) -> Result<Json<dto::PasskeyRevocation>, ApiError> {
+    browser: Option<Extension<crate::browser::BrowserRequest>>,
+) -> Result<Response, ApiError> {
     let auth = owner(&state, &headers).await?;
     let (current_session_revoked, passkey_available) = service(&state)?
         .revoke(&auth, &id, identity::now_ms()?)
@@ -321,8 +323,13 @@ async fn revoke(
         event.name = "identity.passkey.revoked",
         outcome = "ok"
     );
-    Ok(Json(dto::PasskeyRevocation {
+    let mut response = Json(dto::PasskeyRevocation {
         current_session_revoked,
         passkey_available,
-    }))
+    })
+    .into_response();
+    if browser.is_some() && current_session_revoked {
+        crate::browser::clear_session(&mut response);
+    }
+    Ok(response)
 }

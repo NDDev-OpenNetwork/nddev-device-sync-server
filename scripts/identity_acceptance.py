@@ -14,6 +14,7 @@ import urllib.request
 import uuid
 from enrollment_acceptance import check_enrollment
 from sync_acceptance import check_sync
+from browser_acceptance import check_browser
 
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
 
@@ -267,6 +268,7 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             assert status == (202 if attempt < 10 else 429), "socket-source budget was bypassed through headers or new ports"
         assert len(messages()) == mail_count
         assert request("/v2/auth/github/start", {})[0] == 503
+        sensitive += check_browser(f"http://{host}:{port}", owner, code, messages, sql)
         sql("DELETE FROM nds_auth_limits; DELETE FROM nds_email_challenges;")
         command("docker", "stop", "--time", "5", mailbox)
         created = False

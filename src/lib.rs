@@ -1,4 +1,5 @@
 mod admission;
+pub mod browser;
 pub mod config;
 pub mod database;
 pub mod devices;
@@ -185,6 +186,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/health", get(health))
         .route("/v1/ready", get(ready))
         .route("/source", get(source))
+        .route("/v2/browser", get(browser::capabilities))
         .merge(identity::http::routes())
         .merge(devices::http::routes())
         .merge(sync::routes())
@@ -193,6 +195,10 @@ pub fn router(state: AppState) -> Router {
         .merge(observability::routes())
         .layer(DefaultBodyLimit::max(65_536))
         .with_state(state.clone())
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            browser::transport,
+        ))
         .layer(middleware::from_fn_with_state(state, request_trace))
 }
 

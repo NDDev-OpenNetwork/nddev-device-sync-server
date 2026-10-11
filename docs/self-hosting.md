@@ -93,7 +93,7 @@ Release deployments must instead consume the reviewed built image by digest.
 
 The server exposes `/v1/health`, `/v1/ready`, `/source` and the implemented v2
 identity/device routes, with request IDs and `Cache-Control: no-store`. Identity is
-unavailable until configured privately. `/v1/ready` requires schema version 8;
+unavailable until configured privately. `/v1/ready` requires schema version 9;
 use the explicit migrator before starting the updated runtime. The observability
 pipeline remains a separate slice.
 
@@ -318,3 +318,13 @@ Existing sessions are preserved during migration. Vault/device keys are unchange
 A session issued in the future relative to server time cannot authorize credential
 changes. Losing/removing every authenticator does not introduce recovery flows;
 the accepted email/GitHub methods retain their existing owner policy.
+
+## Browser sessions and schema 9
+
+Schema 9 adds browser device enrollment to the existing signed operation protocol.
+Browser application requests explicitly select the same-origin cookie adapter with
+`X-NDS-Client: browser`. Session issuance uses a Secure/HttpOnly host-only cookie;
+request-origin checks and device proof remain independent. Native bearer clients
+retain their wire format. Qualify updated native clients that understand the `web`
+platform before enrolling browser devices. This adapter is not the Flutter web
+artifact or proof of browser offline/storage qualification.
