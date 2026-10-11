@@ -11,6 +11,9 @@ pub const DEFAULT_STANDARDS_RELEASE: &str = "unreleased";
 pub struct SecretString(String);
 
 impl SecretString {
+    pub(crate) fn from_native(value: String) -> Self {
+        Self(value)
+    }
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -48,6 +51,7 @@ pub struct ServerConfig {
     pub max_connections: usize,
     pub max_requests: usize,
     pub identity: Option<crate::identity::config::AuthConfig>,
+    pub observability: Option<std::sync::Arc<crate::observability::Gateway>>,
     pub vault_wrapping_key: Option<std::sync::Arc<crate::vault::crypto::WrappingKey>>,
 }
 
@@ -75,6 +79,8 @@ pub enum ConfigError {
     PublicOrigin,
     #[error("invalid or insecure vault wrapping key file")]
     VaultKey,
+    #[error("invalid observability gateway configuration")]
+    Observability,
 }
 
 impl ServerConfig {
@@ -96,6 +102,12 @@ impl ServerConfig {
             _ => return Err(ConfigError::TlsPair),
         };
         let config = Self {
+            observability: get("NDS_OBSERVABILITY_CONFIG_FILE")
+                .map(|path| {
+                    crate::observability::Gateway::from_file(std::path::Path::new(&path))
+                        .map_err(|_| ConfigError::Observability)
+                })
+                .transpose()?,
             addr,
             database_url: read_secret(get("DATABASE_URL"), get("DATABASE_URL_FILE"))?,
             tls,

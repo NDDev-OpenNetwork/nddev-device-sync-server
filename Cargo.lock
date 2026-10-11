@@ -1667,16 +1667,16 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-application"
-version = "0.0.1-alpha.12"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=3e5b1db049c47799123847c9831f025cb226c69c#3e5b1db049c47799123847c9831f025cb226c69c"
+version = "0.0.1-alpha.14"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=d08e6b34c9ff6af1fdc179291f5386ec73c84926#d08e6b34c9ff6af1fdc179291f5386ec73c84926"
 dependencies = [
  "nddev-device-sync-domain",
 ]
 
 [[package]]
 name = "nddev-device-sync-domain"
-version = "0.0.4"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=3e5b1db049c47799123847c9831f025cb226c69c#3e5b1db049c47799123847c9831f025cb226c69c"
+version = "0.0.6"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=d08e6b34c9ff6af1fdc179291f5386ec73c84926#d08e6b34c9ff6af1fdc179291f5386ec73c84926"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1687,7 +1687,7 @@ dependencies = [
 [[package]]
 name = "nddev-device-sync-http-signatures"
 version = "0.0.1-alpha.1"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-protocol.git?rev=65f3032fc5c0f111f8a34f2d697d83181474082f#65f3032fc5c0f111f8a34f2d697d83181474082f"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-protocol.git?rev=dbafb78c3ac133a31e465c9ac68215ee7cae3954#dbafb78c3ac133a31e465c9ac68215ee7cae3954"
 dependencies = [
  "base64 0.22.1",
  "httpsig",
@@ -1697,7 +1697,7 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-server"
-version = "0.0.1-alpha.12"
+version = "0.0.1-alpha.14"
 dependencies = [
  "axum",
  "axum-server",
@@ -1711,7 +1711,9 @@ dependencies = [
  "nddev-device-sync-http-signatures",
  "nddev-device-sync-telemetry",
  "opentelemetry",
+ "opentelemetry-proto",
  "opentelemetry_sdk",
+ "prost",
  "rcgen",
  "reqwest",
  "ring",
@@ -1734,15 +1736,17 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-telemetry"
-version = "0.0.1-alpha.3"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-observability.git?rev=863a0caad5a06a450a0d99a23675bfb5b5959b2e#863a0caad5a06a450a0d99a23675bfb5b5959b2e"
+version = "0.0.1-alpha.5"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-observability.git?rev=469a77aea2e234b50d0554625a761d52985e7cb0#469a77aea2e234b50d0554625a761d52985e7cb0"
 dependencies = [
  "android_log-sys",
  "chrono",
  "jsonschema",
  "opentelemetry",
  "opentelemetry-otlp",
+ "opentelemetry-proto",
  "opentelemetry_sdk",
+ "prost",
  "reqwest",
  "rustls",
  "serde",
@@ -2698,6 +2702,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "sha1_smol"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbfa15b3dddfee50a0fff136974b3e1bde555604ba463834a7eb7deb6417705d"
+
+[[package]]
 name = "sha2"
 version = "0.10.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3424,6 +3434,7 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "serde_core",
+ "sha1_smol",
  "wasm-bindgen",
 ]
 
@@ -3951,6 +3962,9 @@ name = "zeroize"
 version = "1.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e13084392c5e4bc371903e2935a5eaeed24905a7511356b883835e18a78f6879"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "zerotrie"

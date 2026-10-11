@@ -274,3 +274,33 @@ enable/disable transitions include scope and reason. Debug adds only named
 events with bounded fields, never bodies, credentials or raw URLs. Both modes
 use the bounded Compose log retention. Remove all `NDS_DEBUG_*` settings when
 setting `NDS_LOG_MODE=normal`; contradictory settings fail startup safely.
+
+## Authenticated client observability
+
+Mount a private owner-only JSON file and set `NDS_OBSERVABILITY_CONFIG_FILE` to
+its path to enable the signed client gateway. Its fields are `origin` (the
+internal observability service origin), `trace_origin` (the internal Vector OTLP
+HTTP origin), `ingest_token_file` and `admin_token_file`. Configuration and token
+files must be regular files with no group/other permissions; symlinks are refused.
+HTTP origins are allowed only for the operator-owned internal network; public
+clients still use the control plane's authenticated HTTPS origin. No collector
+credential reaches a client, and callers cannot supply proxy destinations.
+
+The gateway binds owner/device identity, consumes signed nonces, validates closed
+redacted batches and caps forwarding at four concurrent requests with five-second
+deadlines. It forwards native OTLP protobuf after attaching verified ownership.
+Both server and collector export opt-out apply to client feeds. Transport receipts
+do not establish searchable delivery; qualify the actual OpenObserve result.
+Without the private configuration the gateway reports unavailable.
+
+## Passkey removal and schema 8
+
+Schema 8 links newly issued passkey sessions to their credential. An owner can
+list fingerprints/creation times and revoke a credential through authenticated
+routes. Removal requires a session issued in the last five minutes and rechecks
+it under the mutation lock. Associated sessions are removed by the same database
+transaction; legacy unlinked passkey sessions are also revoked on a removal.
+Existing sessions are preserved during migration. Vault/device keys are unchanged.
+A session issued in the future relative to server time cannot authorize credential
+changes. Losing/removing every authenticator does not introduce recovery flows;
+the accepted email/GitHub methods retain their existing owner policy.

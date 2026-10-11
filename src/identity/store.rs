@@ -123,6 +123,7 @@ pub(crate) async fn rate(
 pub(crate) async fn insert_session(
     tx: &mut Tx<'_>,
     issue: SessionIssue,
+    passkey: Option<&[u8]>,
 ) -> Result<Session, IdentityError> {
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM nds_sessions")
         .fetch_one(&mut **tx)
@@ -131,9 +132,9 @@ pub(crate) async fn insert_session(
     if count as usize >= MAX_SESSIONS {
         return Err(IdentityError::Capacity);
     }
-    sqlx::query("INSERT INTO nds_sessions(token_digest,user_id,tenant_id,auth_method,expires_at_ms) VALUES ($1,$2,$3,$4,$5)")
+    sqlx::query("INSERT INTO nds_sessions(token_digest,user_id,tenant_id,auth_method,expires_at_ms,passkey_credential_id) VALUES ($1,$2,$3,$4,$5,$6)")
         .bind(issue.digest.0.as_slice()).bind(issue.session.owner.user_id.as_str()).bind(issue.session.owner.tenant_id.as_str())
-        .bind(match issue.session.method { AuthMethod::EmailOtp => "email_otp", AuthMethod::Github => "github", AuthMethod::Passkey => "passkey" }).bind(millis(issue.session.expires_at_ms)?).execute(&mut **tx).await.map_err(unavailable)?;
+        .bind(match issue.session.method { AuthMethod::EmailOtp => "email_otp", AuthMethod::Github => "github", AuthMethod::Passkey => "passkey" }).bind(millis(issue.session.expires_at_ms)?).bind(passkey).execute(&mut **tx).await.map_err(unavailable)?;
     Ok(issue.session)
 }
 
@@ -197,7 +198,7 @@ impl IdentityStore for Store {
             let matches = equal(&digest(row.try_get("verifier").map_err(unavailable)?)?, &verifier);
             let accepted = challenge.consume(now, matches);
             sqlx::query("UPDATE nds_email_challenges SET attempts_remaining=$2,consumed=$3 WHERE challenge_id=$1").bind(id).bind(challenge.attempts_remaining as i16).bind(challenge.consumed).execute(&mut *tx).await.map_err(unavailable)?;
-            let outcome = match accepted { Ok(()) => insert_session(&mut tx, issue).await, Err(error) => Err(error) };
+            let outcome = match accepted { Ok(()) => insert_session(&mut tx, issue, None).await, Err(error) => Err(error) };
             // Denied verification commits attempts. Capacity failure rolls back
             // the entire consumption, allowing correct reauthentication later.
             if matches!(outcome, Err(IdentityError::Capacity | IdentityError::Unavailable)) { return outcome; }
@@ -213,7 +214,7 @@ impl IdentityStore for Store {
         bounded(async {
             let mut tx = self.transaction().await?;
             clean(&mut tx, now).await?;
-            let session = insert_session(&mut tx, issue).await?;
+            let session = insert_session(&mut tx, issue, None).await?;
             tx.commit().await.map_err(unavailable)?;
             Ok(session)
         })

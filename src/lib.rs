@@ -4,8 +4,10 @@ pub mod database;
 pub mod devices;
 pub mod identity;
 pub mod logging;
+pub mod observability;
 pub mod passkeys;
 pub mod protocol_devices;
+pub mod protocol_observability;
 pub mod protocol_sync;
 pub mod protocol_v2;
 pub mod protocol_vault;
@@ -139,6 +141,7 @@ impl AppState {
                 max_requests: 64,
                 identity: None,
                 vault_wrapping_key: None,
+                observability: None,
             },
             database: None,
             identity: None,
@@ -187,6 +190,7 @@ pub fn router(state: AppState) -> Router {
         .merge(sync::routes())
         .merge(vault::routes())
         .merge(passkeys::http::routes())
+        .merge(observability::routes())
         .layer(DefaultBodyLimit::max(65_536))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, request_trace))
