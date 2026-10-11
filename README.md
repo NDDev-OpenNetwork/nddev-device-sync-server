@@ -74,7 +74,8 @@ The local JSON log remains available for diagnosis. The telemetry-enabled health
 field describes operator intent. Configure `NDS_OTLP_ENDPOINT` with the origin of
 an operator-owned Vector collector to export actual native request and operation
 spans through the shared SDK. Setting `NDS_TELEMETRY_ENABLED=off` prevents exporter
-construction; local error/security records remain available. Collector accounts
-are not installed in this server. Tracing admission, retries and shutdown are
+construction; local error/security records remain available. Native OTLP uses the internal Vector endpoint; the optional signed client
+gateway separately holds operator-configured ingest/admin tokens, never client
+credentials for the indexing backend. Tracing admission, retries and shutdown are
 bounded; the SDK records successful batches, failures and dropped spans. Confirm
 actual OpenObserve receipt independently of the configuration flag.
