@@ -7,10 +7,12 @@ pub mod logging;
 pub mod protocol_devices;
 pub mod protocol_sync;
 pub mod protocol_v2;
+pub mod protocol_vault;
 pub mod sync;
 #[cfg(test)]
 mod telemetry_test;
 pub mod transport;
+pub mod vault;
 
 use std::{
     sync::Arc,
@@ -54,6 +56,7 @@ pub struct AppState {
     pub identity: Option<Arc<identity::Service>>,
     pub devices: Option<Arc<devices::Service>>,
     pub sync: Option<Arc<sync::Service>>,
+    pub vault: Option<Arc<vault::Service>>,
     requests: Arc<Semaphore>,
     pressure: Arc<admission::Pressure>,
 }
@@ -88,10 +91,18 @@ impl AppState {
                     .map(|database| Arc::new(sync::initialize(database)))
             })
         });
+        let vault = config.vault_wrapping_key.as_ref().and_then(|wrapping| {
+            sync.as_ref().and_then(|_| {
+                database
+                    .clone()
+                    .map(|pool| Arc::new(vault::initialize(pool, wrapping.clone())))
+            })
+        });
         Ok(Self {
             identity,
             devices,
             sync,
+            vault,
             requests: Arc::new(Semaphore::new(config.max_requests)),
             pressure: Arc::default(),
             config,
@@ -115,11 +126,13 @@ impl AppState {
                 max_connections: 256,
                 max_requests: 64,
                 identity: None,
+                vault_wrapping_key: None,
             },
             database: None,
             identity: None,
             devices: None,
             sync: None,
+            vault: None,
             requests: Arc::new(Semaphore::new(64)),
             pressure: Arc::default(),
         }
@@ -159,6 +172,7 @@ pub fn router(state: AppState) -> Router {
         .merge(identity::http::routes())
         .merge(devices::http::routes())
         .merge(sync::routes())
+        .merge(vault::routes())
         .layer(DefaultBodyLimit::max(65_536))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, request_trace))

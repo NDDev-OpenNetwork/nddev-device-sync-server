@@ -31,7 +31,8 @@ impl IntoResponse for ApiError {
             SyncError::Nonce
             | SyncError::Idempotency
             | SyncError::Revision
-            | SyncError::KeyConflict => StatusCode::CONFLICT,
+            | SyncError::KeyConflict
+            | SyncError::KeyRegistration => StatusCode::CONFLICT,
             SyncError::Capacity | SyncError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };
         tracing::warn!(module="sync",scope="http",event.name="sync.request.rejected",error.type=%self.0,outcome="rejected");
@@ -87,7 +88,7 @@ impl signatures::VerifyingKey for Key {
             .map_err(|_| signatures::HttpSigError::InvalidSignature("invalid".into()))
     }
 }
-async fn authorize(
+pub(crate) async fn authorize(
     state: &AppState,
     headers: &HeaderMap,
     method: &str,

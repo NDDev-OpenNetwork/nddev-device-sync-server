@@ -109,6 +109,7 @@ async fn https_preserves_headers_and_only_reloads_valid_pairs() {
         max_connections: 256,
         max_requests: 64,
         identity: None,
+        vault_wrapping_key: None,
     })
     .await
     .unwrap();
