@@ -135,7 +135,7 @@ fn session_dto(session: Session) -> Result<dto::Session, ApiError> {
             .map_err(|_| IdentityError::Unavailable)?,
     })
 }
-pub(crate) fn issued(value: IssuedSession) -> Result<Json<dto::SessionIssued>, ApiError> {
+pub(crate) fn issued(value: IssuedSession, browser: bool) -> Result<Response, ApiError> {
     tracing::info!(
         module = "identity",
         scope = "http",
@@ -147,10 +147,25 @@ pub(crate) fn issued(value: IssuedSession) -> Result<Json<dto::SessionIssued>, A
         },
         outcome = "ok"
     );
-    Ok(Json(dto::SessionIssued {
-        session: session_dto(value.session)?,
-        session_token: value.token.into_inner(),
-    }))
+    if browser {
+        let token = zeroize::Zeroizing::new(value.token.into_inner());
+        let cookie =
+            crate::browser::session_cookie(&token, value.session.expires_at_ms, now_ms()?)?;
+        let mut response = Json(dto::BrowserSessionIssued {
+            session: session_dto(value.session)?,
+        })
+        .into_response();
+        response
+            .headers_mut()
+            .append(axum::http::header::SET_COOKIE, cookie);
+        Ok(response)
+    } else {
+        Ok(Json(dto::SessionIssued {
+            session: session_dto(value.session)?,
+            session_token: value.token.into_inner(),
+        })
+        .into_response())
+    }
 }
 async fn methods(State(state): State<AppState>) -> Json<dto::AuthMethods> {
     let (email, github) = state
@@ -205,13 +220,15 @@ async fn email_challenge(
 async fn email_verify(
     State(state): State<AppState>,
     source: Option<Extension<PeerAddress>>,
+    browser: Option<Extension<crate::browser::BrowserRequest>>,
     body: Result<Json<dto::EmailVerifyRequest>, JsonRejection>,
-) -> Result<Json<dto::SessionIssued>, ApiError> {
+) -> Result<Response, ApiError> {
     let Json(body) = body.map_err(|_| IdentityError::InvalidInput)?;
     issued(
         service(&state)?
             .verify_email(&body.challenge_id, &body.code, &peer(source)?, now_ms()?)
             .await?,
+        browser.is_some(),
     )
 }
 async fn github_start(
@@ -441,6 +458,7 @@ async fn github_approve(
 async fn github_exchange(
     State(state): State<AppState>,
     source: Option<Extension<PeerAddress>>,
+    browser: Option<Extension<crate::browser::BrowserRequest>>,
     body: Result<Json<dto::GithubExchangeRequest>, JsonRejection>,
 ) -> Result<Response, ApiError> {
     let Json(body) = body.map_err(|_| IdentityError::InvalidInput)?;
@@ -461,7 +479,7 @@ async fn github_exchange(
             }),
         )
             .into_response()),
-        GithubExchange::Session(session) => Ok(issued(session)?.into_response()),
+        GithubExchange::Session(session) => issued(session, browser.is_some()),
     }
 }
 async fn session(

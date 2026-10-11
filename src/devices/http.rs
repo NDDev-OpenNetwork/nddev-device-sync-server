@@ -98,6 +98,7 @@ fn timestamp(value: u64) -> Result<String, DeviceError> {
 fn platform(value: dto::Platform) -> DevicePlatform {
     match value {
         dto::Platform::Android => DevicePlatform::Android,
+        dto::Platform::Web => DevicePlatform::Web,
         dto::Platform::Ios => DevicePlatform::Ios,
         dto::Platform::Linux => DevicePlatform::Linux,
         dto::Platform::Macos => DevicePlatform::Macos,
@@ -112,6 +113,7 @@ fn device(value: Device) -> Result<dto::Device, DeviceError> {
         created_at: timestamp(value.created_at_ms)?,
         platform: match value.platform {
             DevicePlatform::Android => dto::Platform::Android,
+            DevicePlatform::Web => dto::Platform::Web,
             DevicePlatform::Ios => dto::Platform::Ios,
             DevicePlatform::Linux => dto::Platform::Linux,
             DevicePlatform::Macos => dto::Platform::Macos,

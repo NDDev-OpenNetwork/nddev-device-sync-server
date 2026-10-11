@@ -164,7 +164,7 @@ def check_enrollment(request, token, second_session, restart, directory, sql):
         assert status == 201
         assert request("/v2/devices/" + value["device_id"],token=token,method="DELETE")[0] == 204
 
-    platforms = ["linux","macos","windows","ios","android"]
+    platforms = ["linux","macos","windows","ios","android","web"]
     active = []
     for index in range(32):
         if index % 8 == 0: sql("DELETE FROM nds_auth_limits;")
@@ -197,5 +197,5 @@ def check_enrollment(request, token, second_session, restart, directory, sql):
         assert (cursor is None) == (page_number == 3)
     assert len(seen) == 128
     assert sql("SELECT count(*) FROM information_schema.columns WHERE table_name IN ('nds_devices','nds_enrollment_challenges') AND column_name LIKE '%private%'").stdout.strip() == "0"
-    print("Enrollment acceptance passed on the Linux server: real OpenSSL proofs with all five platform values; strict key rejection before allocation; same-session and concurrent consume; both PostgreSQL-locked revoke/enroll orderings; restart, expiry, attempts and key uniqueness; actual 8/32/128 capacities; finite owner cursor pages and socket-source bounds.")
+    print("Enrollment acceptance passed on the Linux server: real OpenSSL proofs with all six platform values; strict key rejection before allocation; same-session and concurrent consume; both PostgreSQL-locked revoke/enroll orderings; restart, expiry, attempts and key uniqueness; actual 8/32/128 capacities; finite owner cursor pages and socket-source bounds.")
     return sensitive
