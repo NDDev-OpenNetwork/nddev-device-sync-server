@@ -18,7 +18,9 @@ from telemetry_acceptance import TelemetryValidator
 
 arguments = argparse.ArgumentParser(description="Real isolated PostgreSQL/SMTP acceptance or a bounded client fixture")
 arguments.add_argument("--fixture-receipt", type=Path)
+arguments.add_argument("--observability-config", type=Path, help="Explicit owned loopback collector fixture configuration")
 arguments.add_argument("--fixture-seconds", type=int, default=1200)
+arguments.add_argument("--fixture-passkeys", action="store_true", help="Use the localhost secure browser origin for owned passkey acceptance")
 options = arguments.parse_args()
 if not 60 <= options.fixture_seconds <= 3600:
     arguments.error("fixture lifetime must be 60..3600 seconds")
@@ -46,11 +48,13 @@ def sql(statement, role="postgres", check=True):
     return subprocess.run(["docker", "exec", "-i", name, "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", role, "-d", "nds", "-f", "-"], input=statement, check=check, capture_output=True, text=True, timeout=10)
 
 
+LOCAL_HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 def wait_ready(port, wanted):
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/ready", timeout=1) as response:
+            with LOCAL_HTTP.open(f"http://127.0.0.1:{port}/v1/ready", timeout=1) as response:
                 status = response.status
         except urllib.error.HTTPError as error:
             status = error.code
@@ -83,11 +87,11 @@ try:
             result = sql("SELECT count(*) FROM pg_roles WHERE rolname='nds_runtime'", check=False)
             if result.returncode == 0 and result.stdout.strip() == "1":
                 # Wait for final TCP server, not the initialization socket server.
-                try:
-                    with socket.create_connection(("127.0.0.1", int(host_port)), timeout=0.2):
-                        break
-                except OSError:
-                    pass
+                probe = subprocess.run(["docker", "exec", name, "pg_isready", "--quiet",
+                    "--host", "127.0.0.1", "--port", "5432", "--username", "nds_runtime",
+                    "--dbname", "nds"], capture_output=True, timeout=5)
+                if probe.returncode == 0:
+                    break
             time.sleep(0.1)
         else:
             raise AssertionError("disposable PostgreSQL did not initialize")
@@ -98,6 +102,15 @@ try:
             path.write_text(f"postgres://{role}:{password}@127.0.0.1:{host_port}/nds\n")
             urls[kind] = str(path)
         env = {key: value for key, value in os.environ.items() if not key.startswith(("NDS_", "DATABASE_URL")) and key != "RUST_LOG"}
+        if options.observability_config is not None:
+            config = options.observability_config.resolve()
+            if not options.fixture_receipt or not options.observability_config.is_absolute() or config.is_relative_to(ROOT):
+                arguments.error("observability configuration requires an owned fixture and absolute private path")
+            from urllib.parse import urlparse
+            settings = json.loads(config.read_text())
+            if any(urlparse(settings[key]).scheme != "http" or urlparse(settings[key]).hostname != "127.0.0.1" for key in ["origin", "trace_origin"]):
+                arguments.error("acceptance collector must use explicit loopback origins")
+            env["NDS_OBSERVABILITY_CONFIG_FILE"] = str(config)
         env["DATABASE_URL_FILE"] = urls["runtime"]
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
@@ -117,7 +130,7 @@ try:
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
         for _ in range(2):
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "6"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "8"
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0
@@ -144,7 +157,7 @@ try:
             else:
                 raise AssertionError("readiness did not wait on real database contention")
             try:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/health", timeout=1)
+                LOCAL_HTTP.open(f"http://127.0.0.1:{port}/v1/health", timeout=1)
                 raise AssertionError("request admission did not reject saturation")
             except urllib.error.HTTPError as error:
                 assert error.code == 503
@@ -157,7 +170,7 @@ try:
         lock_holder.communicate(timeout=5)
         assert lock_holder.returncode == 0
         lock_holder = None
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/health", timeout=1) as response:
+        with LOCAL_HTTP.open(f"http://127.0.0.1:{port}/v1/health", timeout=1) as response:
             assert response.status == 200
         server.terminate()
         logs += server.communicate(timeout=25)[0]
@@ -175,7 +188,7 @@ try:
         for event_name in ["database.migration.started", "database.migration.completed", "process.failed", "admission.saturated", "admission.recovered"]:
             assert any(event["event.name"] == event_name for event in events)
         print("PostgreSQL acceptance passed: migrations replay safely; restricted runtime performs no DDL; real database contention proves bounded request admission and recovery; process/migration envelopes and secrets are verified.")
-        check_identity(BINARY, directory, env, sql, command, validate_events, options.fixture_receipt, options.fixture_seconds)
+        check_identity(BINARY, directory, env, sql, command, validate_events, options.fixture_receipt, options.fixture_seconds, options.fixture_passkeys)
 finally:
     if lock_holder is not None:
         lock_holder.terminate()

@@ -1,7 +1,7 @@
 // Generated; do not edit. AGPL-3.0-only. NDDev OpenNetwork — https://nddev.ai
 // Source: NDDev-OpenNetwork/nddev-device-sync-protocol/contracts/v2/control-plane.schema.json
-// Schema SHA-256: e0b503937e6f15f2e712dd5d72d1bdc164fe3cf33e86551ffb9132df752d2180
-// Generator script SHA-256: 120c57396d8e939c24a876b57a526a07da27fe91ecb81ff894565e43297e0a95
+// Schema SHA-256: fe22afc1f1ea7cc09b8f9cc85ee650514b1f9abadad25b9aa4c77aacf06f51c0
+// Generator script SHA-256: 12e8a175bd449a596e56c964f78c1c4edae0d716b5d06b81241919d29f70f25d
 // Tool: quicktype-core 26.0.0; dependency lock SHA-256: 643e0f2ba88602f4acb9546c401d4838e8e106a9180c0e6f3a760985081bfcf6
 // DTO generation is not schema, authorization or cryptographic validation.
 
@@ -13,6 +13,8 @@ pub struct AuthMethods {
     pub email_otp: MethodAvailability,
 
     pub github: MethodAvailability,
+
+    pub passkey: MethodAvailability,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -74,6 +76,8 @@ pub enum AuthMethod {
     EmailOtp,
 
     Github,
+
+    Passkey,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -107,12 +111,12 @@ pub struct GithubExchangeRequest {
 pub struct GithubPending {
     pub retry_after_seconds: i32,
 
-    pub status: Status,
+    pub status: GithubPendingStatus,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum Status {
+pub enum GithubPendingStatus {
     Pending,
 }
 
@@ -132,6 +136,70 @@ pub enum Decision {
     Approve,
 
     Deny,
+}
+
+/// Bounded native/browser WebAuthn handoff. Exchange token remains native; the browser
+/// proves authenticator possession and user verification before delivery.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyStart {
+    pub authorization_url: String,
+
+    pub exchange_token: String,
+
+    pub expires_in_seconds: i32,
+
+    pub flow_id: String,
+
+    pub poll_after_seconds: i32,
+
+    /// Comparison code displayed by the initiating app and browser approval page; not a bearer
+    /// credential or email OTP.
+    pub verification_code: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyRequest {
+    pub registration: bool,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyStatus {
+    pub retry_after_seconds: i32,
+
+    pub status: PasskeyStatusStatus,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PasskeyStatusStatus {
+    Pending,
+
+    Registered,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyList {
+    pub passkeys: Vec<PasskeyInfo>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyInfo {
+    pub created_at: String,
+
+    pub id: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PasskeyRevocation {
+    pub current_session_revoked: bool,
+
+    pub passkey_available: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]

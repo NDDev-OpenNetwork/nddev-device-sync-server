@@ -93,6 +93,7 @@ fn process_error_class(error: &(dyn std::error::Error + 'static)) -> &'static st
             ConfigError::IdentityHttpsRequired => "configuration_identity_https_required",
             ConfigError::PublicOrigin => "configuration_public_origin",
             ConfigError::VaultKey => "configuration_vault_key",
+            ConfigError::Observability => "configuration_observability",
         };
     }
     if let Some(error) = error.downcast_ref::<DatabaseError>() {
