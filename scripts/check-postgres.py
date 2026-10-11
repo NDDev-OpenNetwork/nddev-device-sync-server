@@ -19,6 +19,7 @@ from telemetry_acceptance import TelemetryValidator
 arguments = argparse.ArgumentParser(description="Real isolated PostgreSQL/SMTP acceptance or a bounded client fixture")
 arguments.add_argument("--fixture-receipt", type=Path)
 arguments.add_argument("--fixture-seconds", type=int, default=1200)
+arguments.add_argument("--fixture-passkeys", action="store_true", help="Use the localhost secure browser origin for owned passkey acceptance")
 options = arguments.parse_args()
 if not 60 <= options.fixture_seconds <= 3600:
     arguments.error("fixture lifetime must be 60..3600 seconds")
@@ -119,7 +120,7 @@ try:
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
         for _ in range(2):
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "6"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "7"
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0
@@ -177,7 +178,7 @@ try:
         for event_name in ["database.migration.started", "database.migration.completed", "process.failed", "admission.saturated", "admission.recovered"]:
             assert any(event["event.name"] == event_name for event in events)
         print("PostgreSQL acceptance passed: migrations replay safely; restricted runtime performs no DDL; real database contention proves bounded request admission and recovery; process/migration envelopes and secrets are verified.")
-        check_identity(BINARY, directory, env, sql, command, validate_events, options.fixture_receipt, options.fixture_seconds)
+        check_identity(BINARY, directory, env, sql, command, validate_events, options.fixture_receipt, options.fixture_seconds, options.fixture_passkeys)
 finally:
     if lock_holder is not None:
         lock_holder.terminate()

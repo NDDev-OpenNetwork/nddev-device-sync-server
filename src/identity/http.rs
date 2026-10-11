@@ -128,13 +128,14 @@ fn session_dto(session: Session) -> Result<dto::Session, ApiError> {
         auth_method: match session.method {
             AuthMethod::EmailOtp => dto::AuthMethod::EmailOtp,
             AuthMethod::Github => dto::AuthMethod::Github,
+            AuthMethod::Passkey => dto::AuthMethod::Passkey,
         },
         expires_at: expires
             .format(&time::format_description::well_known::Rfc3339)
             .map_err(|_| IdentityError::Unavailable)?,
     })
 }
-fn issued(value: IssuedSession) -> Result<Json<dto::SessionIssued>, ApiError> {
+pub(crate) fn issued(value: IssuedSession) -> Result<Json<dto::SessionIssued>, ApiError> {
     tracing::info!(
         module = "identity",
         scope = "http",
@@ -142,6 +143,7 @@ fn issued(value: IssuedSession) -> Result<Json<dto::SessionIssued>, ApiError> {
         auth_method = match value.session.method {
             AuthMethod::EmailOtp => "email_otp",
             AuthMethod::Github => "github",
+            AuthMethod::Passkey => "passkey",
         },
         outcome = "ok"
     );
@@ -166,6 +168,10 @@ async fn methods(State(state): State<AppState>) -> Json<dto::AuthMethods> {
     Json(dto::AuthMethods {
         email_otp: availability(email),
         github: availability(github),
+        passkey: availability(match &state.passkeys {
+            Some(service) => service.available().await.unwrap_or(false),
+            None => false,
+        }),
     })
 }
 async fn email_challenge(
@@ -450,7 +456,7 @@ async fn github_exchange(
         GithubExchange::Pending => Ok((
             StatusCode::ACCEPTED,
             Json(dto::GithubPending {
-                status: dto::Status::Pending,
+                status: dto::GithubPendingStatus::Pending,
                 retry_after_seconds: (GITHUB_POLL_MS / 1000) as i32,
             }),
         )

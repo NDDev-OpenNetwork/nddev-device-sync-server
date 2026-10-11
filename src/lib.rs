@@ -4,6 +4,7 @@ pub mod database;
 pub mod devices;
 pub mod identity;
 pub mod logging;
+pub mod passkeys;
 pub mod protocol_devices;
 pub mod protocol_sync;
 pub mod protocol_v2;
@@ -57,6 +58,7 @@ pub struct AppState {
     pub devices: Option<Arc<devices::Service>>,
     pub sync: Option<Arc<sync::Service>>,
     pub vault: Option<Arc<vault::Service>>,
+    pub passkeys: Option<Arc<passkeys::Service>>,
     requests: Arc<Semaphore>,
     pressure: Arc<admission::Pressure>,
 }
@@ -98,11 +100,21 @@ impl AppState {
                     .map(|pool| Arc::new(vault::initialize(pool, wrapping.clone())))
             })
         });
+        let passkeys = match (&database, &config.public_origin, &config.identity) {
+            (Some(pool), Some(origin), Some(identity)) if origin.domain().is_some() => {
+                Some(Arc::new(
+                    passkeys::Service::new(pool.clone(), origin, identity.crypto.clone())
+                        .map_err(|_| database::DatabaseError::Identity)?,
+                ))
+            }
+            _ => None,
+        };
         Ok(Self {
             identity,
             devices,
             sync,
             vault,
+            passkeys,
             requests: Arc::new(Semaphore::new(config.max_requests)),
             pressure: Arc::default(),
             config,
@@ -133,6 +145,7 @@ impl AppState {
             devices: None,
             sync: None,
             vault: None,
+            passkeys: None,
             requests: Arc::new(Semaphore::new(64)),
             pressure: Arc::default(),
         }
@@ -173,6 +186,7 @@ pub fn router(state: AppState) -> Router {
         .merge(devices::http::routes())
         .merge(sync::routes())
         .merge(vault::routes())
+        .merge(passkeys::http::routes())
         .layer(DefaultBodyLimit::max(65_536))
         .with_state(state.clone())
         .layer(middleware::from_fn_with_state(state, request_trace))

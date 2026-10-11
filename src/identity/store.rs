@@ -21,7 +21,7 @@ fn digest(value: Vec<u8>) -> Result<ProtectedDigest, IdentityError> {
     Ok(ProtectedDigest(value.try_into().map_err(unavailable)?))
 }
 
-async fn bounded<T>(
+pub(crate) async fn bounded<T>(
     work: impl Future<Output = Result<T, IdentityError>>,
 ) -> Result<T, IdentityError> {
     tokio::time::timeout(crate::database::DATABASE_TIMEOUT, work)
@@ -120,7 +120,10 @@ pub(crate) async fn rate(
     Ok(())
 }
 
-async fn insert_session(tx: &mut Tx<'_>, issue: SessionIssue) -> Result<Session, IdentityError> {
+pub(crate) async fn insert_session(
+    tx: &mut Tx<'_>,
+    issue: SessionIssue,
+) -> Result<Session, IdentityError> {
     let count: i64 = sqlx::query_scalar("SELECT count(*) FROM nds_sessions")
         .fetch_one(&mut **tx)
         .await
@@ -130,7 +133,7 @@ async fn insert_session(tx: &mut Tx<'_>, issue: SessionIssue) -> Result<Session,
     }
     sqlx::query("INSERT INTO nds_sessions(token_digest,user_id,tenant_id,auth_method,expires_at_ms) VALUES ($1,$2,$3,$4,$5)")
         .bind(issue.digest.0.as_slice()).bind(issue.session.owner.user_id.as_str()).bind(issue.session.owner.tenant_id.as_str())
-        .bind(match issue.session.method { AuthMethod::EmailOtp => "email_otp", AuthMethod::Github => "github" }).bind(millis(issue.session.expires_at_ms)?).execute(&mut **tx).await.map_err(unavailable)?;
+        .bind(match issue.session.method { AuthMethod::EmailOtp => "email_otp", AuthMethod::Github => "github", AuthMethod::Passkey => "passkey" }).bind(millis(issue.session.expires_at_ms)?).execute(&mut **tx).await.map_err(unavailable)?;
     Ok(issue.session)
 }
 
@@ -225,7 +228,7 @@ impl IdentityStore for Store {
             // Denial must not roll back the observed-expiry deletion.
             tx.commit().await.map_err(unavailable)?;
             let row = row.ok_or(IdentityError::Denied)?;
-            Ok(Session { owner: Owner { user_id: UserId::new(row.try_get::<String,_>("user_id").map_err(unavailable)?).map_err(unavailable)?, tenant_id: TenantId::new(row.try_get::<String,_>("tenant_id").map_err(unavailable)?).map_err(unavailable)? }, method: match row.try_get::<&str,_>("auth_method").map_err(unavailable)? { "email_otp"=>AuthMethod::EmailOtp,"github"=>AuthMethod::Github,_=>return Err(IdentityError::Unavailable) }, expires_at_ms: unsigned(row.try_get("expires_at_ms").map_err(unavailable)?)? })
+            Ok(Session { owner: Owner { user_id: UserId::new(row.try_get::<String,_>("user_id").map_err(unavailable)?).map_err(unavailable)?, tenant_id: TenantId::new(row.try_get::<String,_>("tenant_id").map_err(unavailable)?).map_err(unavailable)? }, method: match row.try_get::<&str,_>("auth_method").map_err(unavailable)? { "email_otp"=>AuthMethod::EmailOtp,"github"=>AuthMethod::Github,"passkey"=>AuthMethod::Passkey,_=>return Err(IdentityError::Unavailable) }, expires_at_ms: unsigned(row.try_get("expires_at_ms").map_err(unavailable)?)? })
         }).await
     }
     async fn revoke(&self, token: ProtectedDigest, now: u64) -> Result<(), IdentityError> {
