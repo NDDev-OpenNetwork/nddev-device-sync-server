@@ -143,7 +143,8 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         if fixture_receipt is not None:
             receipt = Path(fixture_receipt)
             stop_marker = receipt.with_suffix(".stop")
-            state = {"base_url": f"http://{host}:{port}", "mailpit_url": mail_url, "owner_email": owner, "expires_at_unix": int(time.time()) + fixture_seconds, "stop_marker": str(stop_marker), "status": "running"}
+            control = receipt.with_suffix(".control.json")
+            state = {"base_url": f"http://{host}:{port}", "mailpit_url": mail_url, "owner_email": owner, "expires_at_unix": int(time.time()) + fixture_seconds, "stop_marker": str(stop_marker), "control_file": str(control), "status": "running"}
             with receipt.open("x") as handle:
                 json.dump(state, handle)
             receipt.chmod(0o600)
@@ -151,14 +152,30 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             deadline = time.monotonic() + fixture_seconds
             try:
                 while time.monotonic() < deadline and not stop_marker.exists():
-                    if server.poll() is not None:
+                    # The test harness owns this exact child and its temporary
+                    # dependencies. Broken connections and restarts are real I/O
+                    # failures; no test bypass enters the product server.
+                    if control.exists():
+                        desired = json.loads(control.read_text())
+                        assert set(desired) == {"mode"} and desired["mode"] in {"online", "offline"}
+                        control.unlink()
+                        if desired["mode"] == "offline" and server is not None:
+                            logs += stop(server)
+                            assert server.returncode == 0
+                            server = None
+                        elif desired["mode"] == "online" and server is None:
+                            server = start()
+                        state["status"] = "running" if server is not None else "offline"
+                        receipt.write_text(json.dumps(state))
+                    if server is not None and server.poll() is not None:
                         raise AssertionError("isolated identity server exited")
-                    time.sleep(1)
+                    time.sleep(0.1)
             finally:
                 state["status"] = "stopped"
                 receipt.write_text(json.dumps(state))
-                logs = stop(server)
-                server = None
+                if server is not None:
+                    logs += stop(server)
+                    server = None
                 validate_events(logs)
             return
         denied_status, denied_receipt = request("/v2/auth/email/challenges", {"email": unknown})
