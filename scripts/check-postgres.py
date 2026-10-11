@@ -46,11 +46,13 @@ def sql(statement, role="postgres", check=True):
     return subprocess.run(["docker", "exec", "-i", name, "psql", "-XAt", "-v", "ON_ERROR_STOP=1", "-U", role, "-d", "nds", "-f", "-"], input=statement, check=check, capture_output=True, text=True, timeout=10)
 
 
+LOCAL_HTTP = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
 def wait_ready(port, wanted):
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/ready", timeout=1) as response:
+            with LOCAL_HTTP.open(f"http://127.0.0.1:{port}/v1/ready", timeout=1) as response:
                 status = response.status
         except urllib.error.HTTPError as error:
             status = error.code
@@ -144,7 +146,7 @@ try:
             else:
                 raise AssertionError("readiness did not wait on real database contention")
             try:
-                urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/health", timeout=1)
+                LOCAL_HTTP.open(f"http://127.0.0.1:{port}/v1/health", timeout=1)
                 raise AssertionError("request admission did not reject saturation")
             except urllib.error.HTTPError as error:
                 assert error.code == 503
@@ -157,7 +159,7 @@ try:
         lock_holder.communicate(timeout=5)
         assert lock_holder.returncode == 0
         lock_holder = None
-        with urllib.request.urlopen(f"http://127.0.0.1:{port}/v1/health", timeout=1) as response:
+        with LOCAL_HTTP.open(f"http://127.0.0.1:{port}/v1/health", timeout=1) as response:
             assert response.status == 200
         server.terminate()
         logs += server.communicate(timeout=25)[0]
