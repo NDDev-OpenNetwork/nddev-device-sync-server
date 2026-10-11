@@ -85,11 +85,11 @@ try:
             result = sql("SELECT count(*) FROM pg_roles WHERE rolname='nds_runtime'", check=False)
             if result.returncode == 0 and result.stdout.strip() == "1":
                 # Wait for final TCP server, not the initialization socket server.
-                try:
-                    with socket.create_connection(("127.0.0.1", int(host_port)), timeout=0.2):
-                        break
-                except OSError:
-                    pass
+                probe = subprocess.run(["docker", "exec", name, "pg_isready", "--quiet",
+                    "--host", "127.0.0.1", "--port", "5432", "--username", "nds_runtime",
+                    "--dbname", "nds"], capture_output=True, timeout=5)
+                if probe.returncode == 0:
+                    break
             time.sleep(0.1)
         else:
             raise AssertionError("disposable PostgreSQL did not initialize")
