@@ -27,14 +27,14 @@ async fn bounded<T>(work: impl Future<Output = Result<T, SyncError>>) -> Result<
         .await
         .map_err(unavailable)?
 }
-async fn finish<T>(tx: Tx<'_>, result: Result<T, SyncError>) -> Result<T, SyncError> {
+pub(crate) async fn finish<T>(tx: Tx<'_>, result: Result<T, SyncError>) -> Result<T, SyncError> {
     if matches!(result, Err(SyncError::Unavailable)) {
         return result;
     }
     tx.commit().await.map_err(unavailable)?;
     result
 }
-async fn authorize(
+pub(crate) async fn authorize(
     tx: &mut Tx<'_>,
     auth: &AuthenticatedSession,
     signed: &SignedRequest,
