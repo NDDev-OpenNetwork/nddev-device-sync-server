@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from vault_acceptance import check_vault
 
 def b64(value): return base64.urlsafe_b64encode(value).decode().rstrip('=')
 
@@ -103,5 +104,6 @@ def check_sync(request, token, restart, directory, sql, origin):
     # Explicit cleanup of this fixture's two identities before the independent
     # enrollment capacity suite. Production has no operation/history reset API.
     sql('DELETE FROM nds_sync_operations; DELETE FROM nds_sync_entities; DELETE FROM nds_sync_nonces; DELETE FROM nds_sync_counters; DELETE FROM nds_enrollment_challenges; DELETE FROM nds_devices; DELETE FROM nds_auth_limits;')
+    sensitive.extend(check_vault(enroll, send, request, token, restart, directory, sql))
     print('Signed sync acceptance passed: independent OpenSSL proofs; atomic duplicate/replay/conflict handling; exact-byte receipts; committed-order pages; restart persistence; actual SQL rollback and revocation before replay.')
     return sensitive

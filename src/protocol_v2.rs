@@ -1,7 +1,7 @@
 // Generated; do not edit. AGPL-3.0-only. NDDev OpenNetwork — https://nddev.ai
 // Source: NDDev-OpenNetwork/nddev-device-sync-protocol/contracts/v2/control-plane.schema.json
-// Schema SHA-256: 445e6a18fe4c8c47af5622fa4abdad7a5f193e1d46357348fe800dece0ba0021
-// Generator script SHA-256: 64d6c1aef18ee0821827739b0e338fef7db9b503b9885f7af1c5145a6b0da98a
+// Schema SHA-256: e0b503937e6f15f2e712dd5d72d1bdc164fe3cf33e86551ffb9132df752d2180
+// Generator script SHA-256: 120c57396d8e939c24a876b57a526a07da27fe91ecb81ff894565e43297e0a95
 // Tool: quicktype-core 26.0.0; dependency lock SHA-256: 643e0f2ba88602f4acb9546c401d4838e8e106a9180c0e6f3a760985081bfcf6
 // DTO generation is not schema, authorization or cryptographic validation.
 
@@ -190,4 +190,7 @@ pub enum ErrorEnum {
 
     #[serde(rename = "server_busy")]
     ServerBusy,
+
+    #[serde(rename = "vault_key_registration_required")]
+    VaultKeyRegistrationRequired,
 }

@@ -4,7 +4,7 @@ use thiserror::Error;
 
 pub const DEFAULT_VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const DEFAULT_CHANNEL: &str = "alpha";
-pub const DEFAULT_STANDARDS_RELEASE: &str = "v0.0.1-alpha.9";
+pub const DEFAULT_STANDARDS_RELEASE: &str = "unreleased";
 
 /// A secret is deliberately absent from Debug, including nested config values.
 #[derive(Clone)]
@@ -48,6 +48,7 @@ pub struct ServerConfig {
     pub max_connections: usize,
     pub max_requests: usize,
     pub identity: Option<crate::identity::config::AuthConfig>,
+    pub vault_wrapping_key: Option<std::sync::Arc<crate::vault::crypto::WrappingKey>>,
 }
 
 #[derive(Debug, Error, PartialEq)]
@@ -72,6 +73,8 @@ pub enum ConfigError {
     IdentityHttpsRequired,
     #[error("invalid public origin")]
     PublicOrigin,
+    #[error("invalid or insecure vault wrapping key file")]
+    VaultKey,
 }
 
 impl ServerConfig {
@@ -113,6 +116,9 @@ impl ServerConfig {
             max_requests: admission_limit(get("NDS_MAX_REQUESTS"), 64, 1024)?,
             identity: get("NDS_AUTH_CONFIG_FILE")
                 .map(|path| crate::identity::config::AuthConfig::read(&path))
+                .transpose()?,
+            vault_wrapping_key: get("NDS_VAULT_KEK_FILE")
+                .map(|path| crate::vault::crypto::WrappingKey::read(&path).map(std::sync::Arc::new))
                 .transpose()?,
         };
         if config.identity.is_some() && config.tls.is_none() && !config.addr.ip().is_loopback() {

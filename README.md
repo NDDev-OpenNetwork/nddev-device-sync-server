@@ -16,13 +16,16 @@ The current server provides:
 - browser pairing approval, expiring/revocable sessions and bounded abuse controls;
 - session-bound Ed25519 device enrollment, paged owner inventory and revocation;
 - signed encrypted sync operations, immutable idempotency receipts and explicit conflicts;
+- automatic owner-key delivery to authenticated active devices, with encrypted PostgreSQL key envelopes;
 - generated wire types and immutable core/protocol source pins;
 - compatible health metadata without a speculative core module registry.
 
 The legacy `module_count` health field is zero: the server composes no local-tool
 adapters. The native agent owns the actual manifest inventory and observations.
 
-Native vault storage and key pairing are separate client work. Without private identity configuration, `/v2/auth/methods`
+Vault keys are wrapped under a distinct operator key outside PostgreSQL; the
+server has decryption authority. Native key caching and ciphertext replicas
+belong to clients. Without private identity configuration, `/v2/auth/methods`
 reports unavailable methods. Provider readiness does not prove a completed
 sign-in or delivery to an external mailbox.
 

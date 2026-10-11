@@ -93,7 +93,7 @@ Release deployments must instead consume the reviewed built image by digest.
 
 The server exposes `/v1/health`, `/v1/ready`, `/source` and the implemented v2
 identity/device routes, with request IDs and `Cache-Control: no-store`. Identity is
-unavailable until configured privately. `/v1/ready` requires schema version 3;
+unavailable until configured privately. `/v1/ready` requires schema version 6;
 use the explicit migrator before starting the updated runtime. The observability
 pipeline remains a separate slice.
 
@@ -104,6 +104,18 @@ For Compose, use `compose.yaml` plus `compose.identity.yaml` and set
 `NDS_AUTH_DIRECTORY`; the overlay mounts this directory read-only at
 `/run/nds-auth`. Paths inside the JSON refer to readable files in that mount.
 Protect it from unrelated users and never put the file or secrets in Git.
+
+For automatic native vault provisioning, configure `NDS_VAULT_KEK_FILE` with a
+distinct canonical unpadded base64url 32-byte wrapping key outside PostgreSQL.
+The identity overlay reads `/run/nds-auth/vault_kek`; prepare that regular file
+privately with mode `0600` or `0400` and ownership readable by UID 10001. Symlinks
+and group/world-readable files are rejected. Never reuse the identity pepper or
+silently replace this wrapping key. No backup or recovery mechanism is created.
+`/v2/vault/key` rechecks the session, device signature, nonce and active device
+under the same transaction used by revocation. An existing client root registers
+once; another key cannot replace its established binding. The server has
+decryption authority, so this model is not client-only E2EE. Native HTTPS request
+and response bodies contain privileged key material and must not be recorded.
 
 | JSON field | Contract |
 | --- | --- |

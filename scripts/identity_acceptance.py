@@ -44,10 +44,15 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         config_file = Path(directory) / "identity.json"
         config_file.write_text(json.dumps(config))
         config_file.chmod(0o600)
+        vault_kek = Path(directory) / "vault_kek"
+        vault_key = base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
+        sensitive.append(vault_key)
+        vault_kek.write_text(vault_key)
+        vault_kek.chmod(0o600)
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-        env = env | {"NDS_AUTH_CONFIG_FILE": str(config_file), "NDS_SERVER_ADDR": f"127.0.0.1:{port}", "NDS_PUBLIC_ORIGIN": f"http://127.0.0.1:{port}", "NDS_MAX_REQUESTS": "64"}
+        env = env | {"NDS_AUTH_CONFIG_FILE": str(config_file), "NDS_VAULT_KEK_FILE": str(vault_kek), "NDS_SERVER_ADDR": f"127.0.0.1:{port}", "NDS_PUBLIC_ORIGIN": f"http://127.0.0.1:{port}", "NDS_MAX_REQUESTS": "64"}
 
         def request(path, body=None, token=None, method=None, headers=None):
             headers = (headers or {}) | ({"Content-Type": "application/json"} if body is not None else {})
