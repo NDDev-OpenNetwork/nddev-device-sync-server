@@ -64,6 +64,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     {
         [] | ["serve"] => {
             let config = ServerConfig::from_env()?;
+            if config.web_assets.is_some() {
+                tracing::info!(
+                    module = "http",
+                    scope = "io",
+                    event.name = "web.assets.loaded",
+                    available = true,
+                    outcome = "ok"
+                );
+            }
             let state = AppState::from_config(config.clone()).await?;
             transport::serve(&config, router(state)).await?;
         }
@@ -94,6 +103,7 @@ fn process_error_class(error: &(dyn std::error::Error + 'static)) -> &'static st
             ConfigError::PublicOrigin => "configuration_public_origin",
             ConfigError::VaultKey => "configuration_vault_key",
             ConfigError::Observability => "configuration_observability",
+            ConfigError::WebAssets => "configuration_web_assets",
         };
     }
     if let Some(error) = error.downcast_ref::<DatabaseError>() {

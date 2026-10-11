@@ -45,6 +45,10 @@ impl IntoResponse for ApiError {
                 StatusCode::UNAUTHORIZED,
                 dto::ErrorEnum::AuthenticationFailed,
             ),
+            IdentityError::RecentAuthenticationRequired => (
+                StatusCode::FORBIDDEN,
+                dto::ErrorEnum::RecentAuthenticationRequired,
+            ),
             IdentityError::RateLimited => {
                 (StatusCode::TOO_MANY_REQUESTS, dto::ErrorEnum::RateLimited)
             }

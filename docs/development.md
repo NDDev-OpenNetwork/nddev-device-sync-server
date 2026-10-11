@@ -20,11 +20,11 @@ central standards.
 
 ## Standards compatibility
 
-The identity slice adopts `v0.0.1-alpha.9`
-(`16a477beac6127adf73ef102df74a48451d607f1`). ADR 0003 permits email OTP and
-GitHub PKCE for one explicitly configured owner. `module.yaml` records the
-immutable paired core and protocol commits. These development commits do not
-rename published releases or imply enrollment/sync acceptance.
+`standarts.lock` records the immutable engineering and identity contract.
+ADR 0006 defines the three sign-in methods and server-managed vault keys;
+ADR 0007 defines browser sessions and offline replicas. `module.yaml` records
+the paired core and protocol commits. Source updates do not rename published
+releases or imply deployment or client-platform acceptance.
 
 `just protocol-check` regenerates the owned authentication DTO from the exact
 protocol commit, its locked quicktype tool and rustfmt. It reads existing local
@@ -48,3 +48,8 @@ For a real client, `scripts/check-postgres.py --fixture-receipt <new-absolute-pa
 receipt containing its loopback API, Mailpit API and generated owner address.
 Create the receipt's `stop_marker` to finish early; the bounded lease also stops
 the owned processes/containers automatically. The receipt must be outside Git.
+`--fixture-passkeys` uses the `localhost` origin required by WebAuthn.
+`--fixture-web-root <absolute-directory>` hosts a task-owned manifest-verified
+artifact through the ordinary server adapter. The receipt's `control_file`
+accepts `{"mode":"offline"}` or `{"mode":"online"}` to stop or restart only
+the owned listener while retaining its disposable database and mailbox.

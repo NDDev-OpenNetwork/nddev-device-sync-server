@@ -1,6 +1,6 @@
 // Generated; do not edit. AGPL-3.0-only. NDDev OpenNetwork — https://nddev.ai
 // Source: NDDev-OpenNetwork/nddev-device-sync-protocol/contracts/v2/control-plane.schema.json
-// Schema SHA-256: cf37641b65a839419a7f437e3d487781c1959183d0e5f4a94f4ea523a50a78e9
+// Schema SHA-256: eb42be95562b527368e2054fa2968bef6708decb51abd0c47f891e0ec19e901a
 // Generator script SHA-256: 88a6d40fddd4f8e0e2e63e5a0bc9ef0184fe03186161a8ee496d747fc329782f
 // Tool: quicktype-core 26.0.0; dependency lock SHA-256: 643e0f2ba88602f4acb9546c401d4838e8e106a9180c0e6f3a760985081bfcf6
 // DTO generation is not schema, authorization or cryptographic validation.
@@ -130,6 +130,9 @@ pub enum ErrorEnum {
 
     #[serde(rename = "rate_limited")]
     RateLimited,
+
+    #[serde(rename = "recent_authentication_required")]
+    RecentAuthenticationRequired,
 
     #[serde(rename = "replayed_nonce")]
     ReplayedNonce,
