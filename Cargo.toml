@@ -1,6 +1,6 @@
 [package]
 name = "nddev-device-sync-server"
-version = "0.0.1-alpha.11"
+version = "0.0.1-alpha.12"
 edition = "2024"
 rust-version = "1.99"
 license = "AGPL-3.0-only"
@@ -8,14 +8,15 @@ authors = ["NDDev OpenNetwork"]
 build = "build.rs"
 
 [dependencies]
-nddev-device-sync-http-signatures = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-protocol.git", rev = "9f1698f7042f6f4b4832e7aed70403d0f3ad8218" }
+nddev-device-sync-http-signatures = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-protocol.git", rev = "65f3032fc5c0f111f8a34f2d697d83181474082f" }
 axum = "0.8.9"
 axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
 base64 = "0.22"
 zeroize = "1.8"
+webauthn-rs = { version = "=0.5.5", default-features = false }
 libc = "0.2"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
-nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "e87368c53bd524caeabc1e14743c96fcfd87da77" }
+nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "3e5b1db049c47799123847c9831f025cb226c69c" }
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls-no-provider", "form", "json"] }
 ring = "0.17"

@@ -18,7 +18,7 @@ from sync_acceptance import check_sync
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
 
 
-def check_identity(binary, directory, env, sql, command, validate_events, fixture_receipt=None, fixture_seconds=1200):
+def check_identity(binary, directory, env, sql, command, validate_events, fixture_receipt=None, fixture_seconds=1200, fixture_passkeys=False):
     mailbox = "nds-mail-check-" + uuid.uuid4().hex[:12]
     server = None
     created = False
@@ -52,13 +52,14 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
         with socket.socket() as sock:
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
-        env = env | {"NDS_AUTH_CONFIG_FILE": str(config_file), "NDS_VAULT_KEK_FILE": str(vault_kek), "NDS_SERVER_ADDR": f"127.0.0.1:{port}", "NDS_PUBLIC_ORIGIN": f"http://127.0.0.1:{port}", "NDS_MAX_REQUESTS": "64"}
+        host = "localhost" if fixture_passkeys else "127.0.0.1"
+        env = env | {"NDS_AUTH_CONFIG_FILE": str(config_file), "NDS_VAULT_KEK_FILE": str(vault_kek), "NDS_SERVER_ADDR": f"127.0.0.1:{port}", "NDS_PUBLIC_ORIGIN": f"http://{host}:{port}", "NDS_MAX_REQUESTS": "64"}
 
         def request(path, body=None, token=None, method=None, headers=None):
             headers = (headers or {}) | ({"Content-Type": "application/json"} if body is not None else {})
             if token is not None:
                 headers["Authorization"] = "Bearer " + token
-            req = urllib.request.Request(f"http://127.0.0.1:{port}" + path, data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
+            req = urllib.request.Request(f"http://{host}:{port}" + path, data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
             try:
                 response = http.open(req, timeout=5)
             except urllib.error.HTTPError as error:
@@ -137,11 +138,11 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
                 time.sleep(0.05)
         assert sql("SELECT count(*) FROM nds_owner").stdout.strip() == "0"
         server = start()
-        assert request("/v2/auth/methods") == (200, {"email_otp": "available", "github": "unavailable"})
+        assert request("/v2/auth/methods") == (200, {"email_otp": "available", "github": "unavailable", "passkey": "unavailable"})
         if fixture_receipt is not None:
             receipt = Path(fixture_receipt)
             stop_marker = receipt.with_suffix(".stop")
-            state = {"base_url": f"http://127.0.0.1:{port}", "mailpit_url": mail_url, "owner_email": owner, "expires_at_unix": int(time.time()) + fixture_seconds, "stop_marker": str(stop_marker), "status": "running"}
+            state = {"base_url": f"http://{host}:{port}", "mailpit_url": mail_url, "owner_email": owner, "expires_at_unix": int(time.time()) + fixture_seconds, "stop_marker": str(stop_marker), "status": "running"}
             with receipt.open("x") as handle:
                 json.dump(state, handle)
             receipt.chmod(0o600)

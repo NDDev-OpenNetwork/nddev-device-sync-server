@@ -8,7 +8,7 @@ COPY migrations ./migrations
 RUN test -n "$NDS_SOURCE_COMMIT" && cargo build --locked --release
 
 FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl libssl3 \
     && rm -rf /var/lib/apt/lists/* \
     && groupadd --gid 10001 nds && useradd --uid 10001 --gid 10001 --no-create-home nds
 COPY --from=build /build/target/release/nddev-device-sync-server /usr/local/bin/nddev-device-sync-server
