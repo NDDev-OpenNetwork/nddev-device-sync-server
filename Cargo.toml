@@ -32,7 +32,7 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1.53", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5", default-features = false }
 tracing = "0.1"
-nddev-device-sync-telemetry = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-observability.git", rev = "469a77aea2e234b50d0554625a761d52985e7cb0", features = ["otlp", "client-traces"] }
+nddev-device-sync-telemetry = { git = "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-observability.git", rev = "e4eb0c57df475eaea3769b995a7e8343cb3a55b5", features = ["otlp", "client-traces"] }
 opentelemetry = { version = "0.33.1", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.33.1", default-features = false, features = ["trace"] }
 tracing-opentelemetry = { version = "0.34.0", default-features = false }
