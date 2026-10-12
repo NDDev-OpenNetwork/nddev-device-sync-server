@@ -67,7 +67,9 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             # operator certificate, credential or global trust store is used.
             certificate = Path(directory) / "browser-certificate.pem"
             key = Path(directory) / "browser-key.pem"
-            command("openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-noenc", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1", "-addext", "extendedKeyUsage=serverAuth", "-keyout", str(key), "-out", str(certificate))
+            # A directly trusted self-signed leaf must not inherit OpenSSL's
+            # default CA:TRUE: native verifiers reject a CA used as a server.
+            command("openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-noenc", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1", "-addext", "extendedKeyUsage=serverAuth", "-addext", "basicConstraints=critical,CA:FALSE", "-keyout", str(key), "-out", str(certificate))
             key.chmod(0o600)
             context = ssl.create_default_context(cafile=str(certificate))
             http = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))

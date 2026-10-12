@@ -118,38 +118,42 @@ async fn exchange(
 struct Id {
     flow_id: String,
 }
-fn proof(headers: &HeaderMap) -> Result<(&str, &str), IdentityError> {
-    if headers.get_all("cookie").iter().count() != 1
-        || headers.get_all("x-nds-csrf").iter().count() != 1
+fn cookie(headers: &HeaderMap) -> Result<Option<&str>, IdentityError> {
+    // HTTP/2 may split cookies across fields (RFC 9113 section 8.2.3).
+    // Reject duplicate credentials, not unrelated session-cookie fields.
+    if headers
+        .get_all("cookie")
+        .iter()
+        .map(HeaderValue::len)
+        .sum::<usize>()
+        > 8192
     {
         return Err(IdentityError::Denied);
     }
-    let cookie = headers
-        .get("cookie")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| {
-            value
-                .split(';')
-                .map(str::trim)
-                .filter_map(|part| part.strip_prefix("nds_passkey="))
-                .collect::<Vec<_>>()
-                .as_slice()
-                .first()
-                .copied()
-                .filter(|_| {
-                    value
-                        .split(';')
-                        .filter(|part| part.trim().starts_with("nds_passkey="))
-                        .count()
-                        == 1
-                })
-        })
-        .ok_or(IdentityError::Denied)?;
+    let mut cookie = None;
+    for field in headers.get_all("cookie") {
+        let field = field.to_str().map_err(|_| IdentityError::Denied)?;
+        for part in field.split(';') {
+            if let Some(value) = part.trim().strip_prefix("nds_passkey=") {
+                if cookie.is_some() || !super::opaque(value) {
+                    return Err(IdentityError::Denied);
+                }
+                cookie = Some(value);
+            }
+        }
+    }
+    Ok(cookie)
+}
+fn proof(headers: &HeaderMap) -> Result<(&str, &str), IdentityError> {
+    if headers.get_all("x-nds-csrf").iter().count() != 1 {
+        return Err(IdentityError::Denied);
+    }
+    let cookie = cookie(headers)?.ok_or(IdentityError::Denied)?;
     let csrf = headers
         .get("x-nds-csrf")
         .and_then(|value| value.to_str().ok())
         .ok_or(IdentityError::Denied)?;
-    if cookie.len() != 43 || csrf.len() != 43 {
+    if !super::opaque(csrf) {
         return Err(IdentityError::Denied);
     }
     Ok((cookie, csrf))
@@ -196,31 +200,7 @@ async fn browser(
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
     let service = service(&state)?;
-    let previous_cookie = headers
-        .get("cookie")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| {
-            value
-                .split(';')
-                .map(str::trim)
-                .find_map(|part| part.strip_prefix("nds_passkey="))
-        });
-    let duplicate = headers
-        .get("cookie")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| {
-            value
-                .split(';')
-                .filter(|part| part.trim().starts_with("nds_passkey="))
-                .count()
-                > 1
-        });
-    if duplicate
-        || headers.get_all("cookie").iter().count() > 1
-        || previous_cookie.is_some_and(|cookie| cookie.len() != 43)
-    {
-        return Err(IdentityError::Denied.into());
-    }
+    let previous_cookie = cookie(&headers)?;
     let (cookie, csrf, code, registration) = service.browser(&id.flow_id, previous_cookie)?;
     let russian = headers
         .get("accept-language")
@@ -332,4 +312,58 @@ async fn revoke(
         crate::browser::clear_session(&mut response);
     }
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn passkey_proof_accepts_http2_cookie_fields_with_a_browser_session() {
+        let cookie = "C".repeat(43);
+        let csrf = "S".repeat(43);
+        let mut headers = HeaderMap::new();
+        headers.append(
+            "cookie",
+            HeaderValue::from_static("__Host-nds-session=unrelated"),
+        );
+        headers.append(
+            "cookie",
+            HeaderValue::from_str(&format!("nds_passkey={cookie}")).unwrap(),
+        );
+        headers.insert("x-nds-csrf", HeaderValue::from_str(&csrf).unwrap());
+        assert_eq!(proof(&headers).unwrap(), (cookie.as_str(), csrf.as_str()));
+    }
+
+    #[test]
+    fn passkey_proof_rejects_ambiguous_or_excessive_credentials() {
+        let cookie = format!("nds_passkey={}", "C".repeat(43));
+        let mut headers = HeaderMap::new();
+        headers.insert("cookie", HeaderValue::from_str(&cookie).unwrap());
+        headers.insert(
+            "x-nds-csrf",
+            HeaderValue::from_str(&"S".repeat(43)).unwrap(),
+        );
+        assert!(proof(&headers).is_ok());
+        let mut duplicate = headers.clone();
+        duplicate.append("cookie", HeaderValue::from_str(&cookie).unwrap());
+        assert!(proof(&duplicate).is_err());
+        let mut duplicate = headers.clone();
+        duplicate.insert(
+            "cookie",
+            HeaderValue::from_str(&format!("{cookie}; {cookie}")).unwrap(),
+        );
+        assert!(proof(&duplicate).is_err());
+        let mut duplicate = headers.clone();
+        duplicate.append("x-nds-csrf", headers["x-nds-csrf"].clone());
+        assert!(proof(&duplicate).is_err());
+        let mut excessive = headers.clone();
+        excessive.insert(
+            "cookie",
+            HeaderValue::from_str(&format!("other={}; {cookie}", "x".repeat(8192))).unwrap(),
+        );
+        assert!(proof(&excessive).is_err());
+        headers.remove("cookie");
+        assert!(proof(&headers).is_err());
+    }
 }
