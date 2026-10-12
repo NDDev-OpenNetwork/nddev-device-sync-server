@@ -26,7 +26,7 @@ pub(crate) fn capture() -> (tracing::Dispatch, SdkTracerProvider, Captured) {
     let config = nddev_device_sync_telemetry::Config {
         service: "nddev-device-sync-server".into(),
         version: "test".into(),
-        repository: "NDDev-OpenNetwork/nddev-device-sync-server".into(),
+        repository: "NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-server".into(),
         commit: crate::SOURCE_COMMIT.into(),
         channel: "alpha".into(),
         standards: "test".into(),

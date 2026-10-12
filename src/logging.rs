@@ -31,7 +31,7 @@ impl Settings {
         Ok(Self(Config {
             service: "nddev-device-sync-server".into(),
             version: label("NDS_VERSION", DEFAULT_VERSION)?,
-            repository: "NDDev-OpenNetwork/nddev-device-sync-server".into(),
+            repository: "NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-server".into(),
             commit: SOURCE_COMMIT.into(),
             channel: label("NDS_RELEASE_CHANNEL", DEFAULT_CHANNEL)?,
             standards: label("NDS_STANDARDS_RELEASE", DEFAULT_STANDARDS_RELEASE)?,

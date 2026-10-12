@@ -74,7 +74,7 @@ impl Github {
             .connect_timeout(Duration::from_secs(2))
             .timeout(Duration::from_secs(3))
             .pool_max_idle_per_host(1)
-            .user_agent("NDDev-OpenNetwork/nddev-device-sync-server")
+            .user_agent("NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-server")
             .build()
             .map_err(|_| IdentityError::Unavailable)?;
         let ready = Arc::new(AtomicBool::new(probe(&client).await));

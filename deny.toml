@@ -20,5 +20,5 @@ unknown-git = "deny"
 allow-git = [
     "https://github.com/NDDev-OpenNetwork/nddev-device-sync-protocol.git",
     "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git",
-    "https://github.com/NDDev-OpenNetwork/nddev-device-sync-observability.git",
+    "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-observability.git",
 ]

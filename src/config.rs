@@ -125,7 +125,8 @@ impl ServerConfig {
             standards_release: get("NDS_STANDARDS_RELEASE")
                 .unwrap_or_else(|| DEFAULT_STANDARDS_RELEASE.into()),
             source_url: get("NDS_SOURCE_URL").unwrap_or_else(|| {
-                "https://github.com/NDDev-OpenNetwork/nddev-device-sync-server".into()
+                "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-server"
+                    .into()
             }),
             telemetry_enabled: get("NDS_TELEMETRY_ENABLED")
                 .map(|value| !matches!(value.to_ascii_lowercase().as_str(), "0" | "false" | "off"))
