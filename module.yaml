@@ -7,6 +7,6 @@ repository: NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-server
 standards_lock: standarts.lock
 core_commit: fbe50f9994dde44f26ba803ac82c5d2ecfa1cacd
 protocol_commit: 2d02bfca16266e7c343b024807362c7cbbf8f7c6
-telemetry_commit: 469a77aea2e234b50d0554625a761d52985e7cb0
+telemetry_commit: e4eb0c57df475eaea3769b995a7e8343cb3a55b5
 platforms:
   - linux
