@@ -88,6 +88,7 @@ fn content_type(path: &str) -> Result<&'static str, Error> {
         "html" => "text/html; charset=utf-8",
         "js" | "mjs" => "text/javascript; charset=utf-8",
         "css" => "text/css; charset=utf-8",
+        "txt" => "text/plain; charset=utf-8",
         "json" => "application/json",
         "wasm" => "application/wasm",
         "png" => "image/png",

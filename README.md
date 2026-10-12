@@ -79,3 +79,10 @@ gateway separately holds operator-configured ingest/admin tokens, never client
 credentials for the indexing backend. Tracing admission, retries and shutdown are
 bounded; the SDK records successful batches, failures and dropped spans. Confirm
 actual OpenObserve receipt independently of the configuration flag.
+
+Browser release acceptance can use `--fixture-tls` together with an explicit
+`--fixture-receipt`. The harness generates a short-lived loopback certificate,
+validates it with a private Python trust context and writes only its certificate
+path/public-key digest to the private receipt. A test browser must trust that
+exact fixture certificate independently; no system trust or live certificate
+is changed. This option is confined to the acceptance harness.
