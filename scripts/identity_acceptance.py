@@ -28,6 +28,9 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
     logs = ""
     sensitive = []
     captures = {}
+    # Interactive fixtures can run for an hour with real client telemetry.
+    # Keep their capture finite without applying the short test's 2 MiB budget.
+    log_budget = (32 if fixture_receipt is not None else 2) * 1024 * 1024
     http = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
         command("docker", "run", "--rm", "--detach", "--name", mailbox, "--user", "10001:10001", "--read-only", "--cap-drop=ALL", "--security-opt", "no-new-privileges:true", "--memory", "128m", "--cpus", "0.5", "--pids-limit", "64", "--publish", "127.0.0.1::1025", "--publish", "127.0.0.1::8025", "--tmpfs", "/data:uid=10001,gid=10001,mode=0700,size=32m", "--env", "MP_DATABASE=/data/mailpit.db", "--env", "MP_MAX_MESSAGES=25", "--log-driver", "local", "--log-opt", "max-size=1m", "--log-opt", "max-file=2", MAILPIT)
@@ -95,7 +98,7 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             def drain():
                 for line in child.stdout:
                     capture["bytes"] += len(line)
-                    if capture["bytes"] > 2 * 1024 * 1024:
+                    if capture["bytes"] > log_budget:
                         capture["overflow"] = True
                         child.terminate()
                         break
