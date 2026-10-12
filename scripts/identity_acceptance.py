@@ -1,11 +1,13 @@
 """Real HTTP + PostgreSQL + isolated SMTP mailbox acceptance. No external mail."""
 import base64
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import re
 import secrets
 import socket
+import ssl
 import subprocess
 import threading
 import time
@@ -19,7 +21,7 @@ from browser_acceptance import check_browser
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
 
 
-def check_identity(binary, directory, env, sql, command, validate_events, fixture_receipt=None, fixture_seconds=1200, fixture_passkeys=False):
+def check_identity(binary, directory, env, sql, command, validate_events, fixture_receipt=None, fixture_seconds=1200, fixture_passkeys=False, fixture_tls=False):
     mailbox = "nds-mail-check-" + uuid.uuid4().hex[:12]
     server = None
     created = False
@@ -54,13 +56,28 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             sock.bind(("127.0.0.1", 0))
             port = sock.getsockname()[1]
         host = "localhost" if fixture_passkeys else "127.0.0.1"
-        env = env | {"NDS_AUTH_CONFIG_FILE": str(config_file), "NDS_VAULT_KEK_FILE": str(vault_kek), "NDS_SERVER_ADDR": f"127.0.0.1:{port}", "NDS_PUBLIC_ORIGIN": f"http://{host}:{port}", "NDS_MAX_REQUESTS": "64"}
+        origin = f"{'https' if fixture_tls else 'http'}://{host}:{port}"
+        env = env | {"NDS_AUTH_CONFIG_FILE": str(config_file), "NDS_VAULT_KEK_FILE": str(vault_kek), "NDS_SERVER_ADDR": f"127.0.0.1:{port}", "NDS_PUBLIC_ORIGIN": origin, "NDS_MAX_REQUESTS": "64"}
+        tls_evidence = {}
+        if fixture_tls:
+            # All material is newly generated inside the private fixture. No
+            # operator certificate, credential or global trust store is used.
+            certificate = Path(directory) / "browser-certificate.pem"
+            key = Path(directory) / "browser-key.pem"
+            command("openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-noenc", "-days", "1", "-subj", "/CN=localhost", "-addext", "subjectAltName=DNS:localhost,IP:127.0.0.1", "-addext", "extendedKeyUsage=serverAuth", "-keyout", str(key), "-out", str(certificate))
+            key.chmod(0o600)
+            context = ssl.create_default_context(cafile=str(certificate))
+            http = urllib.request.build_opener(urllib.request.ProxyHandler({}), urllib.request.HTTPSHandler(context=context))
+            env.update(NDS_TLS_CERT_FILE=str(certificate), NDS_TLS_KEY_FILE=str(key))
+            public = subprocess.run(["openssl", "x509", "-in", str(certificate), "-pubkey", "-noout"], capture_output=True, check=True, timeout=10).stdout
+            der = subprocess.run(["openssl", "pkey", "-pubin", "-outform", "DER"], input=public, capture_output=True, check=True, timeout=10).stdout
+            tls_evidence = {"certificate_file": str(certificate), "certificate_spki_sha256": base64.b64encode(hashlib.sha256(der).digest()).decode()}
 
         def request(path, body=None, token=None, method=None, headers=None):
             headers = (headers or {}) | ({"Content-Type": "application/json"} if body is not None else {})
             if token is not None:
                 headers["Authorization"] = "Bearer " + token
-            req = urllib.request.Request(f"http://{host}:{port}" + path, data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
+            req = urllib.request.Request(origin + path, data=None if body is None else json.dumps(body).encode(), headers=headers, method=method)
             try:
                 response = http.open(req, timeout=5)
             except urllib.error.HTTPError as error:
@@ -144,7 +161,8 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             receipt = Path(fixture_receipt)
             stop_marker = receipt.with_suffix(".stop")
             control = receipt.with_suffix(".control.json")
-            state = {"base_url": f"http://{host}:{port}", "mailpit_url": mail_url, "owner_email": owner, "expires_at_unix": int(time.time()) + fixture_seconds, "stop_marker": str(stop_marker), "control_file": str(control), "status": "running"}
+            state = {"base_url": origin, "mailpit_url": mail_url, "owner_email": owner, "expires_at_unix": int(time.time()) + fixture_seconds, "stop_marker": str(stop_marker), "control_file": str(control), "status": "running"}
+            state.update(tls_evidence)
             with receipt.open("x") as handle:
                 json.dump(state, handle)
             receipt.chmod(0o600)
