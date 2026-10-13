@@ -189,7 +189,7 @@ fn serve(state: AppState, path: &str) -> Response {
     for (name, value) in [
         (
             "content-security-policy",
-            "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'",
+            "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self'; connect-src 'self' https://api.github.com; worker-src 'self' blob:; manifest-src 'self'; form-action 'self'",
         ),
         ("x-content-type-options", "nosniff"),
         ("referrer-policy", "same-origin"),
