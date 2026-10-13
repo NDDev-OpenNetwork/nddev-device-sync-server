@@ -32,7 +32,8 @@ impl IntoResponse for ApiError {
             | SyncError::Idempotency
             | SyncError::Revision
             | SyncError::KeyConflict
-            | SyncError::KeyRegistration => StatusCode::CONFLICT,
+            | SyncError::KeyRegistration
+            | SyncError::CapacityExhausted => StatusCode::CONFLICT,
             SyncError::Capacity | SyncError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
         };
         tracing::warn!(module="sync",scope="http",event.name="sync.request.rejected",error.type=%self.0,outcome="rejected");
@@ -320,6 +321,36 @@ fn bounded_page(page: Page, after: u64, max_bytes: usize) -> Result<dto::SyncPag
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn persistent_capacity_is_an_error_without_retry_after_or_receipt() {
+        let response = ApiError(SyncError::CapacityExhausted).into_response();
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert!(response.headers().get("retry-after").is_none());
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({"error":"sync_capacity_exhausted"})
+        );
+        assert!(serde_json::from_slice::<dto::Sync>(&body).is_err());
+        assert!(serde_json::from_slice::<dto::SyncPage>(&body).is_err());
+    }
+
+    #[tokio::test]
+    async fn temporary_admission_retains_service_unavailable_and_retry_after() {
+        let response = ApiError(SyncError::Capacity).into_response();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(response.headers().get("retry-after").unwrap(), "2");
+        let body = axum::body::to_bytes(response.into_body(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            serde_json::json!({"error":"server_busy"})
+        );
+    }
 
     fn entry(sequence: u64, ciphertext_bytes: usize) -> Entry {
         let id = format!("operation-{sequence}");

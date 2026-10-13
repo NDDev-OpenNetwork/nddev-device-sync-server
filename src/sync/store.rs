@@ -134,11 +134,11 @@ impl SyncStore for Store {
                 // Count retained request/result and an entity replacement as well;
                 // conservative accounting keeps the total finite without pruning.
                 let cost=(body.len()*2+result.len()) as u64;
-                if count>=MAX_OPERATIONS || retained.checked_add(cost).is_none_or(|value|value>MAX_STORED_BYTES) { return Err(SyncError::Capacity); }
+                if count>=MAX_OPERATIONS || retained.checked_add(cost).is_none_or(|value|value>MAX_STORED_BYTES) { return Err(SyncError::CapacityExhausted); }
                 if let Decision::Apply{revision}=decision {
                     if current==0 {
                         let entities:i64=sqlx::query_scalar("SELECT count(*) FROM nds_sync_entities WHERE user_id=$1 AND tenant_id=$2").bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).fetch_one(&mut *tx).await.map_err(unavailable)?;
-                        if entities>=MAX_ENTITY_COUNT as i64 { return Err(SyncError::Capacity); }
+                        if entities>=MAX_ENTITY_COUNT as i64 { return Err(SyncError::CapacityExhausted); }
                     }
                     sqlx::query("INSERT INTO nds_sync_entities(user_id,tenant_id,entity_type,entity_id,revision,request_body) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT(user_id,tenant_id,entity_type,entity_id) DO UPDATE SET revision=EXCLUDED.revision,request_body=EXCLUDED.request_body")
                         .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).bind(operation.entity_kind.as_str()).bind(&operation.entity_id).bind(integer(revision)?).bind(&body).execute(&mut *tx).await.map_err(unavailable)?;
