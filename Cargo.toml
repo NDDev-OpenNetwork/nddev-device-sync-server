@@ -1,6 +1,6 @@
 [package]
 name = "nddev-device-sync-server"
-version = "0.0.1-alpha.16"
+version = "0.0.1-alpha.17"
 edition = "2024"
 rust-version = "1.99"
 license = "AGPL-3.0-only"
@@ -18,7 +18,7 @@ zeroize = "1.8"
 webauthn-rs = { version = "=0.5.5", default-features = false }
 libc = "0.2"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
-nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "fbe50f9994dde44f26ba803ac82c5d2ecfa1cacd" }
+nddev-device-sync-application = { git = "https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git", rev = "61daab3363fb74b54b2d55e34fad968fb8594421" }
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls-no-provider", "form", "json"] }
 ring = "0.17"
@@ -32,7 +32,7 @@ time = { version = "0.3", features = ["formatting"] }
 tokio = { version = "1.53", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
 tower = { version = "0.5", default-features = false }
 tracing = "0.1"
-nddev-device-sync-telemetry = { git = "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-observability.git", rev = "e4eb0c57df475eaea3769b995a7e8343cb3a55b5", features = ["otlp", "client-traces"] }
+nddev-device-sync-telemetry = { git = "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-observability.git", rev = "bb019a4b78f9a921c72e445c7e1ff5c0fe9c24ea", features = ["otlp", "client-traces"] }
 opentelemetry = { version = "0.33.1", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.33.1", default-features = false, features = ["trace"] }
 tracing-opentelemetry = { version = "0.34.0", default-features = false }
