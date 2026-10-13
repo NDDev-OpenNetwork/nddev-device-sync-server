@@ -13,6 +13,7 @@ import urllib.request
 from urllib.parse import urlsplit
 import uuid
 from vault_acceptance import check_vault
+from sync_capacity_acceptance import check_capacity
 
 def b64(value): return base64.urlsafe_b64encode(value).decode().rstrip('=')
 
@@ -35,7 +36,7 @@ def check_sync(request, token, restart, directory, sql, origin):
         assert status==201
         return key,device['device_id']
     http=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    def send(key,device,path,body=None,nonce=None,signature_body=None,target=None):
+    def send(key,device,path,body=None,nonce=None,signature_body=None,target=None,include_headers=False):
         method='GET' if body is None else 'POST';body=b'' if body is None else body
         digest='sha-256=:'+base64.b64encode(hashlib.sha256(body if signature_body is None else signature_body).digest()).decode()+':'
         now=int(time.time());nonce=nonce or b64(secrets.token_bytes(24))
@@ -52,6 +53,8 @@ def check_sync(request, token, restart, directory, sql, origin):
         with response:
             raw=response.read(65537);assert len(raw)<=65536
             assert response.headers['Cache-Control']=='no-store'
+            if include_headers:
+                return response.status,raw,dict(response.headers)
             return response.status,raw
     def operation(device,revision=0,operation_id=None):
         id=operation_id or uuid.uuid4().hex
@@ -142,6 +145,7 @@ def check_sync(request, token, restart, directory, sql, origin):
     assert status==200 and json.loads(raw)=={'entries':[],'next_after_seq':130,'has_more':False}
     for limit in [0,101]:
         assert send(second,id2,f'/v2/sync/operations?after_seq=0&limit={limit}')[0]==400
+    check_capacity(send, first, id1, operation, body, original, sql)
     assert request('/v2/devices/'+id1,token=token,method='DELETE')[0]==204
     assert send(first,id1,'/v2/sync/operations',body)[0]==403
     assert send(first,id1,'/v2/sync/operations?after_seq=0')[0]==403

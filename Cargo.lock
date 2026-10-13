@@ -1697,16 +1697,16 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-application"
-version = "0.0.1-alpha.17"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=61daab3363fb74b54b2d55e34fad968fb8594421#61daab3363fb74b54b2d55e34fad968fb8594421"
+version = "0.0.1-alpha.18"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=631edf30924418e29f2bb0859ab02cbab235623e#631edf30924418e29f2bb0859ab02cbab235623e"
 dependencies = [
  "nddev-device-sync-domain",
 ]
 
 [[package]]
 name = "nddev-device-sync-domain"
-version = "0.0.9"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=61daab3363fb74b54b2d55e34fad968fb8594421#61daab3363fb74b54b2d55e34fad968fb8594421"
+version = "0.0.10"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=631edf30924418e29f2bb0859ab02cbab235623e#631edf30924418e29f2bb0859ab02cbab235623e"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1727,7 +1727,7 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-server"
-version = "0.0.1-alpha.17"
+version = "0.0.1-alpha.18"
 dependencies = [
  "axum",
  "axum-server",
