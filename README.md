@@ -23,7 +23,13 @@ The current server provides:
 - compatible health metadata without a speculative core module registry.
 
 The legacy `module_count` health field is zero: the server composes no local-tool
-adapters. The native agent owns the actual manifest inventory and observations.
+adapters. The native agent discovers those adapters; core owns their observation
+rules and the shared replica policy.
+
+Sync reads honor the requested limit up to 100 operations and stop before the
+encoded JSON page exceeds the core's 60 KiB budget. A truncated page advances
+only through its included operations and retains `has_more`; the existing
+two-item default remains compatible with callers that omit a limit.
 
 Vault keys are wrapped under a distinct operator key outside PostgreSQL; the
 server has decryption authority. Native key caching and ciphertext replicas

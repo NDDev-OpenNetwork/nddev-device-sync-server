@@ -98,6 +98,50 @@ def check_sync(request, token, restart, directory, sql, origin):
     sql('GRANT INSERT ON nds_sync_operations TO nds_runtime')
     status,result=send(first,id1,'/v2/sync/operations',update)
     assert status==201 and json.loads(result)['server_seq']==3
+    # Small records use the requested item budget; large records are bounded by
+    # their actual encoded page size. Both limits preserve a contiguous cursor.
+    expected=[]
+    for index in range(120):
+        item=operation(id1);item['entity_id']=f'page-small-{index}'
+        status,result=send(first,id1,'/v2/sync/operations',json.dumps(item,separators=(',',':')).encode())
+        assert status==201 and json.loads(result)['server_seq']==4+index
+        expected.append(item['operation_id'])
+    for query in ['after_seq=3', 'after_seq=3&limit=2']:
+        status,raw=send(second,id2,'/v2/sync/operations?'+query)
+        observed=json.loads(raw)
+        assert status==200 and len(observed['entries'])==2
+        assert observed['next_after_seq']==5 and observed['has_more']
+    status,raw=send(second,id2,'/v2/sync/operations?after_seq=3&limit=100')
+    observed=json.loads(raw)
+    assert status==200 and len(raw)<=60*1024 and len(observed['entries'])==100
+    assert observed['next_after_seq']==103 and observed['has_more']
+    assert [entry['operation']['operation_id'] for entry in observed['entries']]==expected[:100]
+    status,raw=send(second,id2,'/v2/sync/operations?after_seq=103&limit=100')
+    observed=json.loads(raw)
+    assert status==200 and len(raw)<=60*1024 and len(observed['entries'])==20
+    assert observed['next_after_seq']==123 and not observed['has_more']
+    assert [entry['operation']['operation_id'] for entry in observed['entries']]==expected[100:]
+    expected=[]
+    for index in range(7):
+        item=operation(id1);item['entity_id']=f'page-large-{index}'
+        item['payload']['ciphertext']=b64(secrets.token_bytes(16000))
+        status,result=send(first,id1,'/v2/sync/operations',json.dumps(item,separators=(',',':')).encode())
+        assert status==201 and json.loads(result)['server_seq']==124+index
+        expected.append(item['operation_id'])
+    cursor=123;received=[];reads=0
+    while cursor<130:
+        status,raw=send(second,id2,f'/v2/sync/operations?after_seq={cursor}&limit=100')
+        observed=json.loads(raw);reads+=1
+        assert status==200 and len(raw)<=60*1024 and observed['entries']
+        assert [entry['result']['server_seq'] for entry in observed['entries']]==list(range(cursor+1,cursor+1+len(observed['entries'])))
+        received.extend(entry['operation']['operation_id'] for entry in observed['entries'])
+        cursor=observed['next_after_seq']
+        assert observed['has_more']==(cursor<130)
+    assert received==expected and reads==4
+    status,raw=send(second,id2,'/v2/sync/operations?after_seq=130&limit=100')
+    assert status==200 and json.loads(raw)=={'entries':[],'next_after_seq':130,'has_more':False}
+    for limit in [0,101]:
+        assert send(second,id2,f'/v2/sync/operations?after_seq=0&limit={limit}')[0]==400
     assert request('/v2/devices/'+id1,token=token,method='DELETE')[0]==204
     assert send(first,id1,'/v2/sync/operations',body)[0]==403
     assert send(first,id1,'/v2/sync/operations?after_seq=0')[0]==403
@@ -107,5 +151,5 @@ def check_sync(request, token, restart, directory, sql, origin):
     # enrollment capacity suite. Production has no operation/history reset API.
     sql('DELETE FROM nds_sync_operations; DELETE FROM nds_sync_entities; DELETE FROM nds_sync_nonces; DELETE FROM nds_sync_counters; DELETE FROM nds_enrollment_challenges; DELETE FROM nds_devices; DELETE FROM nds_auth_limits;')
     sensitive.extend(check_vault(enroll, send, request, token, restart, directory, sql))
-    print('Signed sync acceptance passed: independent OpenSSL proofs; atomic duplicate/replay/conflict handling; exact-byte receipts; committed-order pages; restart persistence; actual SQL rollback and revocation before replay.')
+    print('Signed sync acceptance passed: independent OpenSSL proofs; atomic duplicate/replay/conflict handling; exact-byte receipts; committed-order item/encoded-byte pages; restart persistence; actual SQL rollback and revocation before replay.')
     return sensitive

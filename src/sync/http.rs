@@ -262,21 +262,185 @@ async fn page(
             now,
         )
         .await?;
-    let entries = page
-        .entries
-        .into_iter()
-        .map(|entry| {
-            Ok(dto::SyncEntry {
-                operation: serde_json::from_slice(&entry.request_body)
-                    .map_err(|_| SyncError::Unavailable)?,
-                result: serde_json::from_slice(&entry.result_body)
-                    .map_err(|_| SyncError::Unavailable)?,
-            })
-        })
-        .collect::<Result<Vec<_>, SyncError>>()?;
-    Ok(Json(dto::SyncPage {
-        entries,
-        next_after_seq: page.next_after as i64,
+    Ok(Json(bounded_page(
+        page,
+        cursor.after_seq.unwrap_or(0),
+        MAX_PAGE_BYTES,
+    )?))
+}
+
+/// Measure the actual wire entries, including base64 and result metadata. The
+/// fixed envelope reserves the longest valid cursor and boolean representation;
+/// it cannot underestimate the final JSON response. Never split an operation or
+/// advance the cursor past an entry that did not fit in this response.
+fn bounded_page(page: Page, after: u64, max_bytes: usize) -> Result<dto::SyncPage, SyncError> {
+    let mut response = dto::SyncPage {
+        entries: Vec::new(),
+        next_after_seq: i64::try_from(after).map_err(|_| SyncError::Unavailable)?,
         has_more: page.has_more,
-    }))
+    };
+    let mut encoded_bytes = serde_json::to_vec(&dto::SyncPage {
+        entries: Vec::new(),
+        next_after_seq: MAX_REVISION as i64,
+        has_more: false,
+    })
+    .map_err(|_| SyncError::Unavailable)?
+    .len();
+    if encoded_bytes > max_bytes {
+        return Err(SyncError::Unavailable);
+    }
+    for stored in page.entries {
+        let entry = dto::SyncEntry {
+            operation: serde_json::from_slice(&stored.request_body)
+                .map_err(|_| SyncError::Unavailable)?,
+            result: serde_json::from_slice(&stored.result_body)
+                .map_err(|_| SyncError::Unavailable)?,
+        };
+        let size = serde_json::to_vec(&entry)
+            .map_err(|_| SyncError::Unavailable)?
+            .len();
+        let next_size = encoded_bytes
+            .saturating_add(size)
+            .saturating_add(usize::from(!response.entries.is_empty()));
+        if next_size > max_bytes {
+            if response.entries.is_empty() {
+                return Err(SyncError::Unavailable);
+            }
+            response.has_more = true;
+            break;
+        }
+        encoded_bytes = next_size;
+        response.next_after_seq =
+            i64::try_from(stored.server_seq).map_err(|_| SyncError::Unavailable)?;
+        response.entries.push(entry);
+    }
+    Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(sequence: u64, ciphertext_bytes: usize) -> Entry {
+        let id = format!("operation-{sequence}");
+        let operation: dto::SyncOperation = serde_json::from_value(serde_json::json!({
+            "schema_version": 2,
+            "operation_id": id,
+            "device_id": "generated-device",
+            "entity_id": "generated-record",
+            "entity_type": "vault_record",
+            "base_revision": sequence - 1,
+            "idempotency_key": id,
+            "payload": {
+                "algorithm": "aes-256-gcm",
+                "key_id": "generated-key",
+                "nonce": URL_SAFE_NO_PAD.encode([0_u8; 12]),
+                "ciphertext": URL_SAFE_NO_PAD.encode(vec![0_u8; ciphertext_bytes])
+            }
+        }))
+        .unwrap();
+        Entry {
+            request_body: serde_json::to_vec(&operation).unwrap(),
+            result_body: serde_json::to_vec(&dto::SyncApplied {
+                operation_id: id,
+                outcome: dto::SyncAppliedOutcome::Applied,
+                revision: sequence as i64,
+                server_seq: sequence as i64,
+            })
+            .unwrap(),
+            server_seq: sequence,
+        }
+    }
+
+    #[test]
+    fn small_entries_use_the_requested_count_without_exceeding_the_wire_budget() {
+        let result = bounded_page(
+            Page {
+                entries: (1..=100).map(|sequence| entry(sequence, 32)).collect(),
+                next_after: 100,
+                has_more: true,
+            },
+            0,
+            MAX_PAGE_BYTES,
+        )
+        .unwrap();
+        assert_eq!(result.entries.len(), 100);
+        assert_eq!(result.next_after_seq, 100);
+        assert!(result.has_more);
+        assert!(serde_json::to_vec(&result).unwrap().len() <= MAX_PAGE_BYTES);
+    }
+
+    #[test]
+    fn byte_limited_pages_preserve_the_complete_ordered_history() {
+        let mut cursor = 0_u64;
+        let mut seen = Vec::new();
+        while cursor < 7 {
+            let result = bounded_page(
+                Page {
+                    entries: (cursor + 1..=7)
+                        .map(|sequence| entry(sequence, 16_000))
+                        .collect(),
+                    next_after: 7,
+                    has_more: false,
+                },
+                cursor,
+                MAX_PAGE_BYTES,
+            )
+            .unwrap();
+            assert!(serde_json::to_vec(&result).unwrap().len() <= MAX_PAGE_BYTES);
+            assert!(!result.entries.is_empty());
+            for entry in result.entries {
+                let sequence = match entry.result {
+                    dto::Sync::Applied(value) => value.server_seq as u64,
+                    _ => panic!("generated applied receipt required"),
+                };
+                assert_eq!(sequence, cursor + 1);
+                cursor = sequence;
+                seen.push(cursor);
+            }
+            assert_eq!(result.next_after_seq as u64, cursor);
+            assert_eq!(result.has_more, cursor < 7);
+        }
+        assert_eq!(seen, (1..=7).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn empty_and_maximum_cursor_pages_keep_their_position_and_bound() {
+        let empty = bounded_page(
+            Page {
+                entries: Vec::new(),
+                next_after: MAX_REVISION,
+                has_more: false,
+            },
+            MAX_REVISION,
+            MAX_PAGE_BYTES,
+        )
+        .unwrap();
+        assert_eq!(empty.next_after_seq as u64, MAX_REVISION);
+        assert!(!empty.has_more && empty.entries.is_empty());
+        let final_page = bounded_page(
+            Page {
+                entries: vec![entry(MAX_REVISION, 16_000)],
+                next_after: MAX_REVISION,
+                has_more: false,
+            },
+            MAX_REVISION - 1,
+            MAX_PAGE_BYTES,
+        )
+        .unwrap();
+        assert_eq!(final_page.next_after_seq as u64, MAX_REVISION);
+        assert!(serde_json::to_vec(&final_page).unwrap().len() <= MAX_PAGE_BYTES);
+        assert!(matches!(
+            bounded_page(
+                Page {
+                    entries: vec![entry(1, 32)],
+                    next_after: 1,
+                    has_more: false,
+                },
+                0,
+                64,
+            ),
+            Err(SyncError::Unavailable)
+        ));
+    }
 }
