@@ -86,10 +86,14 @@ credentials for the indexing backend. Tracing admission, retries and shutdown ar
 bounded; the SDK records successful batches, failures and dropped spans. Confirm
 actual OpenObserve receipt independently of the configuration flag.
 
-The signed trace gateway accepts an OTLP warning when `rejected_spans=0`, without
-returning or logging the receiver's text. Genuine partial rejection still fails
-closed: partial-count settlement requires a separately coordinated consumer
-contract; the current receipt never claims those spans were fully accepted.
+The signed trace gateway returns the receiver's accepted span count in the
+existing receipt, including valid partial success and zero accepted spans.
+A warning with `rejected_spans=0` still acknowledges the full batch. Negative or
+excess rejected counts and malformed protobuf fail closed; receiver text is
+neither returned nor logged. A valid partial receipt settles the entire batch
+without resending it. Before deploying this server, qualify the exact native
+and browser client cohort against Protocol alpha.16: older clients require a
+full-count receipt and may retry partially accepted spans.
 
 Browser release acceptance can use `--fixture-tls` together with an explicit
 `--fixture-receipt`. The harness generates a short-lived loopback certificate,
