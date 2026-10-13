@@ -369,7 +369,6 @@ async fn traces(
     body: Bytes,
 ) -> Result<Json<dto::IngressReceipt>, ApiError> {
     use nddev_device_sync_telemetry::client_traces::{AuthenticatedSource, authenticated_batch};
-    use prost::Message;
     if headers
         .get("content-type")
         .and_then(|value| value.to_str().ok())
@@ -406,29 +405,57 @@ async fn traces(
     let response = gateway
         .forward_bytes("/v1/traces", Some(body), signed.device.as_str())
         .await?;
+    Ok(Json(trace_receipt(&response, count)?))
+}
+fn trace_receipt(response: &[u8], count: u32) -> Result<dto::IngressReceipt, SyncError> {
+    use prost::Message;
     let response =
         opentelemetry_proto::tonic::collector::trace::v1::ExportTraceServiceResponse::decode(
-            response.as_slice(),
+            response,
         )
         .map_err(|_| SyncError::Unavailable)?;
-    if let Some(partial) = response.partial_success {
-        if partial.rejected_spans != 0 {
-            return Err(SyncError::Unavailable.into());
-        }
-        if !partial.error_message.is_empty() {
-            tracing::warn!(
-                module = "telemetry",
-                scope = "http",
-                event.name = "telemetry.traces.receiver_warning",
-                outcome = "accepted"
-            );
-        }
+    let rejected = response
+        .partial_success
+        .as_ref()
+        .map_or(0, |partial| partial.rejected_spans);
+    if rejected < 0 || rejected > i64::from(count) {
+        return Err(SyncError::Unavailable);
     }
-    Ok(Json(dto::IngressReceipt {
-        accepted: count as i32,
+    let accepted =
+        i32::try_from(i64::from(count) - rejected).map_err(|_| SyncError::Unavailable)?;
+    if response
+        .partial_success
+        .as_ref()
+        .is_some_and(|partial| !partial.error_message.is_empty())
+    {
+        tracing::warn!(
+            module = "telemetry",
+            scope = "http",
+            event.name = "telemetry.traces.receiver_warning",
+            rejected_count = rejected,
+            outcome = if accepted == 0 {
+                "rejected"
+            } else {
+                "accepted"
+            }
+        );
+    }
+    tracing::info!(
+        module = "telemetry",
+        scope = "http",
+        event.name = "telemetry.traces.receipted",
+        rejected_count = rejected,
+        outcome = if accepted == 0 {
+            "rejected"
+        } else {
+            "accepted"
+        }
+    );
+    Ok(dto::IngressReceipt {
+        accepted,
         duplicates: 0,
         export_mode: dto::ExportMode::Enabled,
-    }))
+    })
 }
 async fn status(
     State(state): State<AppState>,
@@ -514,4 +541,56 @@ async fn silence(
     body: Bytes,
 ) -> Result<Json<dto::Incident>, ApiError> {
     action(&state, uri, headers, id, body, "silence").await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use opentelemetry_proto::tonic::collector::trace::v1::{
+        ExportTracePartialSuccess, ExportTraceServiceResponse,
+    };
+    use prost::Message;
+
+    fn response(rejected: i64, message: &str) -> Vec<u8> {
+        ExportTraceServiceResponse {
+            partial_success: Some(ExportTracePartialSuccess {
+                rejected_spans: rejected,
+                error_message: message.into(),
+            }),
+        }
+        .encode_to_vec()
+    }
+
+    #[test]
+    fn trace_receipts_report_full_partial_and_zero_receiver_acceptance() {
+        for (bytes, accepted) in [
+            (ExportTraceServiceResponse::default().encode_to_vec(), 2),
+            (response(0, ""), 2),
+            (response(0, "receiver warning"), 2),
+            (response(1, ""), 1),
+            (response(1, "receiver warning"), 1),
+            (response(2, "receiver rejection"), 0),
+        ] {
+            let receipt = trace_receipt(&bytes, 2).unwrap();
+            assert_eq!(receipt.accepted, accepted);
+            assert_eq!(receipt.duplicates, 0);
+            assert!(matches!(receipt.export_mode, dto::ExportMode::Enabled));
+        }
+    }
+
+    #[test]
+    fn invalid_trace_receiver_responses_are_not_receipts() {
+        for bytes in [
+            response(-1, ""),
+            response(3, ""),
+            response(i64::MIN, ""),
+            response(i64::MAX, ""),
+            vec![0x0a, 0xff],
+        ] {
+            assert!(matches!(
+                trace_receipt(&bytes, 2),
+                Err(SyncError::Unavailable)
+            ));
+        }
+    }
 }
