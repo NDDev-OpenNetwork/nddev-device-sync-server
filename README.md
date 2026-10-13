@@ -86,6 +86,11 @@ credentials for the indexing backend. Tracing admission, retries and shutdown ar
 bounded; the SDK records successful batches, failures and dropped spans. Confirm
 actual OpenObserve receipt independently of the configuration flag.
 
+The signed trace gateway accepts an OTLP warning when `rejected_spans=0`, without
+returning or logging the receiver's text. Genuine partial rejection still fails
+closed: partial-count settlement requires a separately coordinated consumer
+contract; the current receipt never claims those spans were fully accepted.
+
 Browser release acceptance can use `--fixture-tls` together with an explicit
 `--fixture-receipt`. The harness generates a short-lived loopback certificate,
 validates it with a private Python trust context and writes only its certificate

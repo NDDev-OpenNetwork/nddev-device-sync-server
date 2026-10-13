@@ -411,11 +411,18 @@ async fn traces(
             response.as_slice(),
         )
         .map_err(|_| SyncError::Unavailable)?;
-    if response
-        .partial_success
-        .is_some_and(|partial| partial.rejected_spans != 0 || !partial.error_message.is_empty())
-    {
-        return Err(SyncError::Unavailable.into());
+    if let Some(partial) = response.partial_success {
+        if partial.rejected_spans != 0 {
+            return Err(SyncError::Unavailable.into());
+        }
+        if !partial.error_message.is_empty() {
+            tracing::warn!(
+                module = "telemetry",
+                scope = "http",
+                event.name = "telemetry.traces.receiver_warning",
+                outcome = "accepted"
+            );
+        }
     }
     Ok(Json(dto::IngressReceipt {
         accepted: count as i32,
