@@ -94,7 +94,7 @@ Release deployments must instead consume the reviewed built image by digest.
 
 The server exposes `/v1/health`, `/v1/ready`, `/source` and the implemented v2
 identity/device routes, with request IDs and `Cache-Control: no-store`. Identity is
-unavailable until configured privately. `/v1/ready` requires schema version 9;
+unavailable until configured privately. `/v1/ready` requires schema version 10;
 use the explicit migrator before starting the updated runtime. The observability
 pipeline remains a separate slice.
 
@@ -343,3 +343,52 @@ directory operator-owned and immutable while the process starts. Replace it
 only through an explicitly reviewed artifact update and process restart.
 API paths have no HTML fallback. CSP restricts executable and network resources
 to this origin; source maps and runtime credentials are not web assets.
+
+## Owned screen control and schema 10
+
+Schema 10 adds current endpoint binding rows and finite screen intent/receipt
+rows. Apply the append-only migration with the existing migrator credential;
+Server22 readiness requires schema10. The runtime role has only the needed
+SELECT/INSERT, binding transition and view state/grant UPDATE, and expired-view
+DELETE privileges. It cannot change owner/session references, original request,
+profile/admission/expiry, delete binding CAS history or perform DDL/TRUNCATE.
+
+`/v2/rds` exposes only the canonical binding, bind, create, incoming, view, ready
+and end operations from Protocol17. Every call reuses current owner session,
+enrolled-device HTTP signatures and fresh nonce consumption under the existing
+identity transaction lock. Endpoint registration additionally verifies strict
+canonical non-weak Ed25519 endpoint possession against Core PoP V2 before replay.
+The existing protected Accounts purpose key and the actual local host opt-in,
+LocalUseFence and platform source access remain client-owned guards.
+
+There is one binding row per enrolled device, retained for revision CAS. Views
+retain at most64 rows per owner; each has a <=64KiB original request, <=2KiB
+public projection and <=8KiB opaque native artifact. No private keys, frames,
+locators, native allowlists or capture consent are stored. The retained projection
+contains no original viewer-session digest. Ready is an artifact state, not a
+received/decoded/presented frame.
+
+Early End frees the active participant slot and clears the artifact, while the
+original receipt occupies the cap until its original finite expiry. Exact create
+replay returns the current terminal state with original id/profile/admission/
+expiry; it never returns an ended intent to Requested. Only NEW create checks
+the64row cap; authorized replay, Ready, End and revoke do not. Cleanup runs under
+the same authorizing transaction using its persisted clock floor, deleting only
+expired rows. No live eviction, renewal or expiry movement occurs. After cleanup,
+absent/unowned End both return authorization_denied; no historical registry is
+retained to promise indefinite204. End before expiry requires the current owner
+and an active signed viewer/host participant, without requiring the original
+viewer session, old binding or live native grant.
+
+The owning PostgreSQL/SMTP gate uses fresh enrollment and independent OpenSSL
+HTTP/endpoint signatures, tests races, exact artifact/receipt replay, cap, expiry,
+clock floor, session/device revocation, timeout and runtime privileges. Its opaque
+server artifact fixture is not claimed to be a valid native grant. To additionally
+exercise schema9-to10 with a preserved Server21 binary outside this checkout:
+
+```sh
+python3 scripts/check-postgres.py --fixture-passkeys --upgrade-from /ABS/PREVIOUS_SERVER21_BINARY
+```
+
+This gate owns ephemeral PostgreSQL/SMTP only and does not deploy or establish
+native capture, protected Accounts storage or shared Flutter runtime acceptance.

@@ -22,8 +22,12 @@ arguments.add_argument("--observability-config", type=Path, help="Explicit owned
 arguments.add_argument("--fixture-seconds", type=int, default=1200)
 arguments.add_argument("--fixture-tls", action="store_true", help="Owned ephemeral localhost TLS certificate for browser release acceptance")
 arguments.add_argument("--fixture-passkeys", action="store_true", help="Use the localhost secure browser origin for owned passkey acceptance")
+arguments.add_argument("--upgrade-from", type=Path, help="Existing immutable Server21 binary outside this repository, for real schema9-to10 acceptance")
 arguments.add_argument("--fixture-web-root", type=Path, help="Owned manifest-verified browser test bundle, served by the real server")
 options = arguments.parse_args()
+if options.upgrade_from is not None:
+    if not options.upgrade_from.is_absolute() or not options.upgrade_from.is_file() or options.upgrade_from.resolve().is_relative_to(Path(__file__).resolve().parent.parent):
+        arguments.error("upgrade source must be an explicit existing binary outside the repository")
 if options.fixture_tls and options.fixture_receipt is None:
     arguments.error("TLS browser acceptance requires an owned fixture")
 if not 60 <= options.fixture_seconds <= 3600:
@@ -141,9 +145,23 @@ try:
         assert server.returncode == 0
         server = None
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
+        if options.upgrade_from is not None:
+            logs += command(str(options.upgrade_from), "migrate", env=migration_env) + "\n"
+            assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "9"
+            assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "9"
+            sql("INSERT INTO nddev_schema_meta(key,value) VALUES('upgrade_acceptance','retained9')")
+            server = subprocess.Popen([BINARY, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            wait_ready(port, 503)
+            server.terminate()
+            logs += server.communicate(timeout=25)[0]
+            assert server.returncode == 0
+            server = None
         for _ in range(2):
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "9"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "10"
+        if options.upgrade_from is not None:
+            assert sql("SELECT value FROM nddev_schema_meta WHERE key='upgrade_acceptance'").stdout.strip() == "retained9"
+            print("Schema9-to10 upgrade passed: prior migration history and retained metadata preserved; schema9 readiness rejected; schema10 replay safe.")
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0

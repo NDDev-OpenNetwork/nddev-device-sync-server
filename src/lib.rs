@@ -9,9 +9,11 @@ pub mod observability;
 pub mod passkeys;
 pub mod protocol_devices;
 pub mod protocol_observability;
+pub mod protocol_screen;
 pub mod protocol_sync;
 pub mod protocol_v2;
 pub mod protocol_vault;
+pub mod screen;
 pub mod sync;
 #[cfg(test)]
 mod telemetry_test;
@@ -61,6 +63,7 @@ pub struct AppState {
     pub identity: Option<Arc<identity::Service>>,
     pub devices: Option<Arc<devices::Service>>,
     pub sync: Option<Arc<sync::Service>>,
+    pub screen: Option<Arc<screen::store::Store>>,
     pub vault: Option<Arc<vault::Service>>,
     pub passkeys: Option<Arc<passkeys::Service>>,
     requests: Arc<Semaphore>,
@@ -97,6 +100,17 @@ impl AppState {
                     .map(|database| Arc::new(sync::initialize(database)))
             })
         });
+        let screen = sync
+            .as_ref()
+            .and(config.public_origin.as_ref())
+            .and_then(|origin| {
+                database.clone().map(|pool| {
+                    Arc::new(screen::initialize(
+                        pool,
+                        origin.origin().ascii_serialization(),
+                    ))
+                })
+            });
         let vault = config.vault_wrapping_key.as_ref().and_then(|wrapping| {
             sync.as_ref().and_then(|_| {
                 database
@@ -117,6 +131,7 @@ impl AppState {
             identity,
             devices,
             sync,
+            screen,
             vault,
             passkeys,
             requests: Arc::new(Semaphore::new(config.max_requests)),
@@ -150,6 +165,7 @@ impl AppState {
             identity: None,
             devices: None,
             sync: None,
+            screen: None,
             vault: None,
             passkeys: None,
             requests: Arc::new(Semaphore::new(64)),
@@ -192,6 +208,7 @@ pub fn router(state: AppState) -> Router {
         .merge(identity::http::routes())
         .merge(devices::http::routes())
         .merge(sync::routes())
+        .merge(screen::routes())
         .merge(vault::routes())
         .merge(passkeys::http::routes())
         .merge(observability::routes());

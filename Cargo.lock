@@ -1697,16 +1697,16 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-application"
-version = "0.0.1-alpha.18"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=631edf30924418e29f2bb0859ab02cbab235623e#631edf30924418e29f2bb0859ab02cbab235623e"
+version = "0.0.1-alpha.21"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=75250e0e7297c214e36d057987ef328ea5543a4b#75250e0e7297c214e36d057987ef328ea5543a4b"
 dependencies = [
  "nddev-device-sync-domain",
 ]
 
 [[package]]
 name = "nddev-device-sync-domain"
-version = "0.0.10"
-source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=631edf30924418e29f2bb0859ab02cbab235623e#631edf30924418e29f2bb0859ab02cbab235623e"
+version = "0.0.12"
+source = "git+https://github.com/NDDev-OpenNetwork/nddev-device-sync-core.git?rev=75250e0e7297c214e36d057987ef328ea5543a4b#75250e0e7297c214e36d057987ef328ea5543a4b"
 dependencies = [
  "serde",
  "thiserror 2.0.21",
@@ -1727,7 +1727,7 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-server"
-version = "0.0.1-alpha.21"
+version = "0.0.1-alpha.22"
 dependencies = [
  "axum",
  "axum-server",
@@ -1738,6 +1738,7 @@ dependencies = [
  "lettre",
  "libc",
  "nddev-device-sync-application",
+ "nddev-device-sync-domain",
  "nddev-device-sync-http-signatures",
  "nddev-device-sync-telemetry",
  "opentelemetry",
@@ -1766,8 +1767,8 @@ dependencies = [
 
 [[package]]
 name = "nddev-device-sync-telemetry"
-version = "0.0.1-alpha.9"
-source = "git+https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-observability.git?rev=bb019a4b78f9a921c72e445c7e1ff5c0fe9c24ea#bb019a4b78f9a921c72e445c7e1ff5c0fe9c24ea"
+version = "0.0.1-alpha.11"
+source = "git+https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-observability.git?rev=38f48cf88fb2222d2ccde22460a8f2f564f8e47b#38f48cf88fb2222d2ccde22460a8f2f564f8e47b"
 dependencies = [
  "android_log-sys",
  "chrono",
@@ -2906,6 +2907,7 @@ dependencies = [
  "tokio-stream",
  "tracing",
  "url",
+ "uuid",
  "webpki-roots",
 ]
 
@@ -2972,6 +2974,7 @@ dependencies = [
  "sqlx-core",
  "thiserror 2.0.21",
  "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -3006,6 +3009,7 @@ dependencies = [
  "stringprep",
  "thiserror 2.0.21",
  "tracing",
+ "uuid",
  "whoami",
 ]
 
@@ -3031,6 +3035,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tracing",
  "url",
+ "uuid",
 ]
 
 [[package]]

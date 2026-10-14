@@ -95,7 +95,7 @@ pub fn platform(value: DevicePlatform) -> &'static str {
         DevicePlatform::Web => "web",
     }
 }
-fn device(row: &PgRow) -> Result<Device, DeviceError> {
+pub(crate) fn device(row: &PgRow) -> Result<Device, DeviceError> {
     Ok(Device {
         id: DeviceId::new(row.try_get::<String, _>("device_id").map_err(unavailable)?)
             .map_err(unavailable)?,
@@ -237,6 +237,7 @@ impl DeviceStore for Store {
                     .bind(id.as_str()).bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).fetch_optional(&mut *tx).await.map_err(unavailable)?;
                 if owned.is_none() { return Err(DeviceError::Denied); }
                 sqlx::query("UPDATE nds_devices SET status='revoked' WHERE device_id=$1").bind(id.as_str()).execute(&mut *tx).await.map_err(unavailable)?;
+                crate::screen::store::retire_device(&mut tx,id.as_str()).await.map_err(unavailable)?;
                 Ok(())
             }.await;
             finish(tx,outcome).await
