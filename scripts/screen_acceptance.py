@@ -103,6 +103,7 @@ def check_screen(request, token, second_session, restart, directory, sql, origin
 
     viewer, host, other = [enroll(i) for i in range(3)]
     assert send(viewer, "/v2/rds/views/incoming", session=encode(secrets.token_bytes(32)))[0] == 401
+    assert send(viewer, "/v2/rds/bindings/foreign-device") == (403, {"error": "authorization_denied"})
     for device in [viewer, host, other]:
         assert send(viewer, "/v2/rds/bindings/" + device["device"])[1] == {"binding": None}
         assert bind(device, key_override=key()[0])[0] == 403
@@ -121,6 +122,10 @@ def check_screen(request, token, second_session, restart, directory, sql, origin
         device["revision"] = 1
         # Lost ACK refreshes both actual signatures and preserves instance/base0.
         assert bind(device, 0) == (200, result)
+        assert bind(device, 1)[0] == 403, "same UUID with changed original base was accepted"
+        alternate_key, alternate_public = key()
+        changed_key = device | {"endpoint_key": alternate_key, "endpoint": alternate_public}
+        assert bind(changed_key, 0)[0] == 403, "same UUID with changed endpoint key was accepted"
         value, signed = claim(device, 0)
         value["signature"] = encode(bytes(64))
         assert send(device, "/v2/rds/bindings", value, **signed)[0] == 403, "same-row replay skipped endpoint proof"
@@ -134,6 +139,8 @@ def check_screen(request, token, second_session, restart, directory, sql, origin
         results = list(pool.map(lambda _: send(viewer, "/v2/rds/views", body), range(2)))
     assert results[0] == results[1] and results[0][0] == 201
     current = results[0][1]
+    changed_bytes = json.dumps(json.loads(body), indent=1).encode()
+    assert send(viewer, "/v2/rds/views", changed_bytes) == (409, {"error": "operation_conflict"})
     assert send(host, "/v2/rds/views/incoming")[1]["view"] == current
     assert send(other, "/v2/rds/views/incoming")[1] == {"view": None}
     assert send(host, "/v2/rds/views/" + current["view_id"])[0] == 403
