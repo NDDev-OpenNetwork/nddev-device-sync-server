@@ -358,8 +358,10 @@ and end operations from Protocol17. Every call reuses current owner session,
 enrolled-device HTTP signatures and fresh nonce consumption under the existing
 identity transaction lock. Endpoint registration additionally verifies strict
 canonical non-weak Ed25519 endpoint possession against Core PoP V2 before replay.
-The existing protected Accounts purpose key and the actual local host opt-in,
-LocalUseFence and platform source access remain client-owned guards.
+The consuming client must provide an Accounts-owned protected purpose key and
+enforce local host opt-in, LocalUseFence and platform source access. These are
+client-owned requirements; this server slice does not claim that Accounts or
+shared-client integration is implemented or accepted.
 
 There is one binding row per enrolled device, retained for revision CAS. Views
 retain at most64 rows per owner; each has a <=64KiB original request, <=2KiB
@@ -384,7 +386,14 @@ The owning PostgreSQL/SMTP gate uses fresh enrollment and independent OpenSSL
 HTTP/endpoint signatures, tests races, exact artifact/receipt replay, cap, expiry,
 clock floor, session/device revocation, timeout and runtime privileges. Its opaque
 server artifact fixture is not claimed to be a valid native grant. To additionally
-exercise schema9-to10 with a preserved Server21 binary outside this checkout:
+exercise schema9-to10 with a preserved Server21 binary outside this checkout,
+the optional upgrade fixture requires `cryptography==46.0.5` in its Python
+environment. It uses real AES-256-GCM for seven bounded existing rows in owner,
+device, session, vault envelope, sync counter/entity/operation tables. Canonical
+row bytes and digests are checked after migration10 and its repeat; envelope
+and record decryption remain valid. These are isolated storage witnesses, not
+fabricated authenticated NDS sessions. The existing real HTTP/PG/SMTP checks
+run after scoped witness cleanup:
 
 ```sh
 python3 scripts/check-postgres.py --fixture-passkeys --upgrade-from /ABS/PREVIOUS_SERVER21_BINARY

@@ -145,11 +145,14 @@ try:
         assert server.returncode == 0
         server = None
         migration_env = env | {"NDS_MIGRATION_DATABASE_URL_FILE": urls["migrator"]}
+        upgrade_witness = None
         if options.upgrade_from is not None:
             logs += command(str(options.upgrade_from), "migrate", env=migration_env) + "\n"
             assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "9"
             assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "9"
             sql("INSERT INTO nddev_schema_meta(key,value) VALUES('upgrade_acceptance','retained9')")
+            from upgrade_acceptance import prepare, verify, clean
+            upgrade_witness = prepare(sql)
             server = subprocess.Popen([BINARY, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             wait_ready(port, 503)
             server.terminate()
@@ -158,10 +161,13 @@ try:
             server = None
         for _ in range(2):
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
+            if upgrade_witness is not None:
+                verify(sql, upgrade_witness)
         assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "10"
         if options.upgrade_from is not None:
             assert sql("SELECT value FROM nddev_schema_meta WHERE key='upgrade_acceptance'").stdout.strip() == "retained9"
-            print("Schema9-to10 upgrade passed: prior migration history and retained metadata preserved; schema9 readiness rejected; schema10 replay safe.")
+            clean(sql, upgrade_witness)
+            print("Schema9-to10 upgrade passed: seven canonical identity/device/vault/sync rows preserve all bytes and decrypt after migration10 and repeat; schema9 readiness rejected; old migration history retained.")
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0
