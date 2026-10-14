@@ -147,18 +147,20 @@ async fn binding(
     .transpose()
 }
 fn intent(row: &PgRow) -> Result<ViewIntent, ScreenError> {
-    let dto: dto::ScreenView = serde_json::from_slice(
+    let mut dto: dto::ScreenView = serde_json::from_slice(
         &row.try_get::<Vec<u8>, _>("original_projection")
             .map_err(unavailable)?,
     )
     .map_err(unavailable)?;
-    let mut projection = super::http::projection(dto).map_err(unavailable)?;
-    match row.try_get::<&str, _>("state").map_err(unavailable)? {
-        "requested" => {}
-        "ready" => projection.ready(projection.permit().lease.admitted_at_ms())?,
-        "ended" => projection.end(),
+    // Rehydrate canonical metadata through Core restore, without invoking a
+    // producer transition at a fabricated historical "now" or creating a lease.
+    dto.state = match row.try_get::<&str, _>("state").map_err(unavailable)? {
+        "requested" => dto::State::Requested,
+        "ready" => dto::State::Ready,
+        "ended" => dto::State::Ended,
         _ => return Err(unavailable(())),
-    }
+    };
+    let projection = super::http::projection(dto).map_err(unavailable)?;
     let session = ProtectedDigest(
         row.try_get::<Vec<u8>, _>("viewer_session")
             .map_err(unavailable)?
