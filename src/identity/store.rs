@@ -242,6 +242,9 @@ impl IdentityStore for Store {
             .fetch_optional(&mut *tx)
             .await
             .map_err(unavailable)?;
+            crate::screen::store::retire_session(&mut tx, token.0.as_slice())
+                .await
+                .map_err(unavailable)?;
             tx.commit().await.map_err(unavailable)?;
             if expiry
                 .map(unsigned)

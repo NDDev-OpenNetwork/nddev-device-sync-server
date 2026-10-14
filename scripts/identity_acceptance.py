@@ -16,6 +16,7 @@ import urllib.request
 import uuid
 from enrollment_acceptance import check_enrollment
 from sync_acceptance import check_sync
+from screen_acceptance import check_screen
 from browser_acceptance import check_browser
 
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
@@ -293,6 +294,7 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             server = start()
 
         sensitive += check_sync(request, session_issued["session_token"], restart_enrollment, directory, sql, f"http://{host}:{port}")
+        sensitive += check_screen(request, session_issued["session_token"], second_session, restart_enrollment, directory, sql, f"http://{host}:{port}")
         sensitive += check_enrollment(request, session_issued["session_token"], second_session, restart_enrollment, directory, sql)
         expired_logout = second_session()
         sensitive.append(expired_logout)
