@@ -16,6 +16,8 @@ The current server provides:
 - bounded passkey metadata and fresh-session credential/session revocation;
 - browser pairing approval, expiring/revocable sessions and bounded abuse controls;
 - session-bound Ed25519 device enrollment, paged owner inventory and revocation;
+- signed owned screen endpoint binding and finite view metadata/artifact control;
+  native capture and shared Flutter pixels are separate consumer acceptance;
 - signed encrypted sync operations, immutable idempotency receipts and explicit conflicts;
 - automatic owner-key delivery to authenticated active devices, with encrypted PostgreSQL key envelopes;
 - signed client event/native OTLP ingress, operator delivery status and incident actions;

@@ -1,5 +1,5 @@
 pub mod http;
-mod store;
+pub(crate) mod store;
 
 use crate::identity::crypto::Crypto;
 use ed25519_dalek::{Signature, VerifyingKey};
@@ -36,7 +36,7 @@ impl EnrollmentCrypto for Crypto {
     }
 }
 
-fn verifying_key(key: &PublicDeviceKey) -> Option<VerifyingKey> {
+pub(crate) fn verifying_key(key: &PublicDeviceKey) -> Option<VerifyingKey> {
     let verified = VerifyingKey::from_bytes(&key.0).ok()?;
     let point = verified.to_edwards();
     if verified.is_weak() || !point.is_torsion_free() || point.compress().as_bytes() != &key.0 {
