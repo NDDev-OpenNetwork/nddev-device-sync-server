@@ -48,7 +48,7 @@ jobs:
             --pids-limit 64 nds-server-check
           for _ in {1..30}; do
             if docker exec nds-server-check curl --fail --silent --max-time 1 \
-              http://127.0.0.1:8443/v1/health > "$RUNNER_TEMP/nds-container-health.json"; then
+              http://127.0.0.1:8080/v1/health > "$RUNNER_TEMP/nds-container-health.json"; then
               break
             fi
             sleep 0.2
