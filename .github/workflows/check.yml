@@ -17,7 +17,7 @@ concurrency:
 jobs:
   quality:
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -38,3 +38,26 @@ jobs:
         run: just protocol-check
       - name: Verify PostgreSQL and SMTP identity acceptance
         run: just integration-postgres
+      - name: Build and exercise the actual server container
+        shell: bash
+        run: |
+          docker build --build-arg "NDS_SOURCE_COMMIT=$GITHUB_SHA" --tag nds-server-check .
+          trap 'docker rm --force nds-server-check >/dev/null 2>&1 || true' EXIT
+          docker run --detach --name nds-server-check --read-only --network none \
+            --cap-drop ALL --security-opt no-new-privileges:true --memory 128m \
+            --pids-limit 64 nds-server-check
+          for _ in {1..30}; do
+            if docker exec nds-server-check curl --fail --silent --max-time 1 \
+              http://127.0.0.1:8443/v1/health > "$RUNNER_TEMP/nds-container-health.json"; then
+              break
+            fi
+            sleep 0.2
+          done
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          health = json.loads((Path(os.environ['RUNNER_TEMP']) / 'nds-container-health.json').read_text())
+          assert health['status'] == 'ok'
+          assert health['source_commit'] == os.environ['GITHUB_SHA']
+          assert health['database_configured'] is False
+          PY
