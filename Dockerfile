@@ -1,8 +1,13 @@
-FROM rust:1.99.1-trixie@sha256:591a941676df5f607dfe525a90e28a2d8aef7f55ab25fab1fa62a9fae0cb5544 AS build
+# Bootstrap image has the complete architecture index. The repository toolchain
+# selects the current compiler independently of Docker tag publication timing.
+FROM rust:1.99.0-trixie@sha256:81015672d6939b0265f09adf96d5de125482bb1330106076956b0518e74edc90 AS build
 WORKDIR /build
+ARG TARGETARCH
+COPY rust-toolchain.toml ./
+RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && rustup show active-toolchain && rustc --version
 ARG NDS_SOURCE_COMMIT
 ENV NDS_SOURCE_COMMIT=${NDS_SOURCE_COMMIT}
-COPY Cargo.toml Cargo.lock rust-toolchain.toml build.rs ./
+COPY Cargo.toml Cargo.lock build.rs ./
 COPY src ./src
 COPY migrations ./migrations
 RUN test -n "$NDS_SOURCE_COMMIT" && cargo build --locked --release --jobs 4
