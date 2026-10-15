@@ -20,12 +20,14 @@ def canonical(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()
 
 
-def snapshot(sql):
+def snapshot(sql, original=None):
     # This fixture starts with exactly one generated row in each table.
     # row_to_json retains every column (including nullable fields and bytea hex).
     result = {}
     for table in TABLES:
-        text = sql(f"SELECT row_to_json(t)::text FROM {table} t").stdout.strip()
+        source = table if original is None else table.replace("nds_sync_", "nds_replica_")
+        columns = "*" if original is None else ",".join(json.loads(original[table])[0])
+        text = sql(f"SELECT row_to_json(t)::text FROM (SELECT {columns} FROM {source}) t").stdout.strip()
         rows = [json.loads(line) for line in text.splitlines()]
         assert len(rows) == 1, f"upgrade witness row count changed: {table}"
         result[table] = canonical(rows)
@@ -37,7 +39,7 @@ def prepare(sql):
     import cryptography
     from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    assert cryptography.__version__ == "46.0.5", "upgrade witness requires cryptography46.0.5"
+    assert cryptography.__version__ == "50.0.2", "upgrade witness requires cryptography50.0.2"
     assert all(sql(f"SELECT count(*) FROM {table}").stdout.strip() == "0" for table in TABLES)
     text = lambda value: "'" + value.replace("'", "''") + "'"
     binary = lambda value: f"decode('{value.hex()}','hex')"
@@ -98,7 +100,10 @@ COMMIT;""")
 
 def verify(sql, witness):
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-    current = snapshot(sql)
+    current = snapshot(sql, witness["rows"])
+    assert sql("SELECT admission_version=2 AND floor_seq=0 AND base_seq=0 FROM public.nds_replica_counters").stdout.strip() == "t"
+    assert sql("SELECT applied_seq=1 FROM public.nds_replica_entities").stdout.strip() == "t"
+    assert sql("SELECT wire_version=2 AND base_revision=0 AND applied_revision=1 AND request_bytes=octet_length(request_body) AND result_bytes=octet_length(result_body) FROM public.nds_replica_operations").stdout.strip() == "t"
     for table in TABLES:
         assert current[table] == witness["rows"][table], f"migration changed canonical row bytes: {table}"
     rows = {table: json.loads(data)[0] for table, data in current.items()}
@@ -120,8 +125,11 @@ def verify(sql, witness):
 
 
 def clean(sql, witness):
-    assert witness["checks"] == 2, "upgrade witnesses must survive both migration10 and repeat"
+    assert witness["checks"] == 2, "upgrade witnesses must survive both migration and repeat"
     user, tenant = witness["user"], witness["tenant"]  # Generated canonical UUIDs only.
-    for table in reversed(TABLES):
+    order = ("nds_sync_entities", "nds_sync_operations", "nds_sync_counters",
+             "nds_vault_keys", "nds_sessions", "nds_devices", "nds_owner")
+    for old in order:
+        table = old.replace("nds_sync_", "nds_replica_")
         sql(f"DELETE FROM {table} WHERE user_id='{user}' AND tenant_id='{tenant}'")
-    assert all(sql(f"SELECT count(*) FROM {table}").stdout.strip() == "0" for table in TABLES)
+    assert all(sql(f"SELECT count(*) FROM {table.replace('nds_sync_', 'nds_replica_')}").stdout.strip() == "0" for table in TABLES)

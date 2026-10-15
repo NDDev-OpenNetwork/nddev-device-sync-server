@@ -22,7 +22,7 @@ arguments.add_argument("--observability-config", type=Path, help="Explicit owned
 arguments.add_argument("--fixture-seconds", type=int, default=1200)
 arguments.add_argument("--fixture-tls", action="store_true", help="Owned ephemeral localhost TLS certificate for browser release acceptance")
 arguments.add_argument("--fixture-passkeys", action="store_true", help="Use the localhost secure browser origin for owned passkey acceptance")
-arguments.add_argument("--upgrade-from", type=Path, help="Existing immutable Server21 binary outside this repository, for real schema9-to10 acceptance")
+arguments.add_argument("--upgrade-from", type=Path, help="Existing immutable schema9 server binary outside this repository, for real upgrade acceptance")
 arguments.add_argument("--fixture-web-root", type=Path, help="Owned manifest-verified browser test bundle, served by the real server")
 options = arguments.parse_args()
 if options.upgrade_from is not None:
@@ -40,7 +40,7 @@ if options.fixture_receipt is not None:
 
 ROOT = Path(__file__).resolve().parent.parent
 IMAGE = "postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c"
-BINARY = ROOT / "target/debug/nddev-device-sync-server"
+BINARY = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug/nddev-device-sync-server"
 name = "nds-db-check-" + uuid.uuid4().hex[:12]
 created = False
 server = None
@@ -163,11 +163,14 @@ try:
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
             if upgrade_witness is not None:
                 verify(sql, upgrade_witness)
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "10"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "11"
+        assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "11"
+        assert sql("SELECT to_regclass('public.nds_sync_operations') IS NULL").stdout.strip() == "t"
+        assert sql("UPDATE public.nds_replica_counters SET admission_version=3 WHERE false", "nds_runtime", check=False).returncode != 0
         if options.upgrade_from is not None:
             assert sql("SELECT value FROM nddev_schema_meta WHERE key='upgrade_acceptance'").stdout.strip() == "retained9"
             clean(sql, upgrade_witness)
-            print("Schema9-to10 upgrade passed: seven canonical identity/device/vault/sync rows preserve all bytes and decrypt after migration10 and repeat; schema9 readiness rejected; old migration history retained.")
+            print("Schema9-to11 upgrade passed: seven canonical identity/device/vault/sync rows preserve original columns and decrypt after migration and repeat; schema9 readiness rejected; old migration history retained.")
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0

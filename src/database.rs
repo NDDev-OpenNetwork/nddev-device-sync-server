@@ -9,7 +9,7 @@ use thiserror::Error;
 use crate::config::SecretString;
 
 pub const DATABASE_TIMEOUT: Duration = Duration::from_secs(3);
-pub const REQUIRED_SCHEMA_VERSION: i64 = 10;
+pub const REQUIRED_SCHEMA_VERSION: i64 = 11;
 const MIGRATION_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Error)]

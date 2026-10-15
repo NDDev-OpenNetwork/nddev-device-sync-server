@@ -344,11 +344,38 @@ only through an explicitly reviewed artifact update and process restart.
 API paths have no HTML fallback. CSP restricts executable and network resources
 to this origin; source maps and runtime credentials are not web assets.
 
+## Sync lifecycle and schema 11
+
+The explicit migrator renames the four sync tables to `public.nds_replica_*`
+and projects bounded history metadata from the existing original bytes. It
+preserves request/result bodies, fingerprints and statuses. Invalid historical
+bindings abort the migration. No history is deleted during migration.
+
+Every owner initially admits new wire-version-2 operations. Retained authorized
+replays keep their original status and bytes. `/v3/sync` reports the owner's
+admission version; history/base endpoints preserve original operation strings.
+These wire versions are internal contracts of the same NDS alpha.
+
+Admission version 3 requires separate qualification of the deployed readers and
+writers before an explicit operator transition. The runtime cannot change that
+column and exposes no activation endpoint. Only then can Core select history
+retirement under the existing 16K-operation/256MiB/4096-entity limits. Missing
+legacy outcomes and expired basis/cursor/checkpoint are explicit refusals, never
+replacement operations or success receipts. Commit telemetry is emitted only
+after the database confirms the transaction.
+
+Readiness requires schema 11. The old SQL table names no longer exist; stop old
+server writers before deploying this schema. Build/unit and ordinary isolated
+PostgreSQL tests do not establish old-binary exclusion, lost-commit-acknowledgement
+handling or physical storage-failure qualification. Qualify those deployment
+boundaries separately before activation; source inclusion does not authorize a
+live migration or retention change.
+
 ## Owned screen control and schema 10
 
 Schema 10 adds current endpoint binding rows and finite screen intent/receipt
 rows. Apply the append-only migration with the existing migrator credential;
-Server22 readiness requires schema10. The runtime role has only the needed
+Current readiness requires schema11. The runtime role has only the needed
 SELECT/INSERT, binding transition and view state/grant UPDATE, and expired-view
 DELETE privileges. It cannot change owner/session references, original request,
 profile/admission/expiry, delete binding CAS history or perform DDL/TRUNCATE.
@@ -386,11 +413,11 @@ The owning PostgreSQL/SMTP gate uses fresh enrollment and independent OpenSSL
 HTTP/endpoint signatures, tests races, exact artifact/receipt replay, cap, expiry,
 clock floor, session/device revocation, timeout and runtime privileges. Its opaque
 server artifact fixture is not claimed to be a valid native grant. To additionally
-exercise schema9-to10 with a preserved Server21 binary outside this checkout,
-the optional upgrade fixture requires `cryptography==46.0.5` in its Python
+exercise schema9-to11 with a preserved schema9 server binary outside this checkout,
+the optional upgrade fixture requires `cryptography==50.0.2` in its Python
 environment. It uses real AES-256-GCM for seven bounded existing rows in owner,
 device, session, vault envelope, sync counter/entity/operation tables. Canonical
-row bytes and digests are checked after migration10 and its repeat; envelope
+original column bytes and digests are checked after migration11 and its repeat; envelope
 and record decryption remain valid. These are isolated storage witnesses, not
 fabricated authenticated NDS sessions. The existing real HTTP/PG/SMTP checks
 run after scoped witness cleanup:

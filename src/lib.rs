@@ -11,6 +11,7 @@ pub mod protocol_devices;
 pub mod protocol_observability;
 pub mod protocol_screen;
 pub mod protocol_sync;
+pub mod protocol_sync3;
 pub mod protocol_v2;
 pub mod protocol_vault;
 pub mod screen;

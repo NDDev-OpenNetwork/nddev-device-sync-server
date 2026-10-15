@@ -34,7 +34,7 @@ impl VaultKeyStore for Store {
                 let now = now.max(crate::identity::now_ms().map_err(unavailable)?);
                 crate::sync::store::authorize(&mut tx, auth, &signed, now).await?;
                 let owner = &auth.session.owner;
-                let root: Option<String> = sqlx::query_scalar("SELECT root_key_id FROM nds_sync_counters WHERE user_id=$1 AND tenant_id=$2 FOR UPDATE")
+                let root: Option<String> = sqlx::query_scalar("SELECT root_key_id FROM public.nds_replica_counters WHERE user_id=$1 AND tenant_id=$2 FOR UPDATE")
                     .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).fetch_one(&mut *tx).await.map_err(unavailable)?;
                 let envelope = sqlx::query("SELECT key_id,nonce,ciphertext FROM nds_vault_keys WHERE user_id=$1 AND tenant_id=$2")
                     .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).fetch_optional(&mut *tx).await.map_err(unavailable)?;
@@ -59,7 +59,7 @@ impl VaultKeyStore for Store {
                 sqlx::query("INSERT INTO nds_vault_keys(user_id,tenant_id,key_id,nonce,ciphertext) VALUES ($1,$2,$3,$4,$5)")
                     .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).bind(key.id())
                     .bind(nonce.as_slice()).bind(ciphertext).execute(&mut *tx).await.map_err(unavailable)?;
-                sqlx::query("UPDATE nds_sync_counters SET root_key_id=$3 WHERE user_id=$1 AND tenant_id=$2")
+                sqlx::query("UPDATE public.nds_replica_counters SET root_key_id=$3 WHERE user_id=$1 AND tenant_id=$2")
                     .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).bind(key.id()).execute(&mut *tx).await.map_err(unavailable)?;
                 Ok(key)
             }.await;

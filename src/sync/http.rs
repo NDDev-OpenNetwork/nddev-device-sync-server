@@ -8,12 +8,15 @@ use axum::{
     routing::post,
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use nddev_device_sync_application::sync::history::HistoryStore;
 use nddev_device_sync_application::sync::*;
 use nddev_device_sync_http_signatures as signatures;
 use serde::Deserialize;
 
 pub fn routes() -> Router<AppState> {
-    Router::new().route("/v2/sync/operations", post(append).get(page))
+    Router::new()
+        .route("/v2/sync/operations", post(append).get(page))
+        .merge(super::v3::routes())
 }
 pub struct ApiError(SyncError);
 impl From<SyncError> for ApiError {
@@ -56,7 +59,7 @@ fn identity_error(error: nddev_device_sync_application::identity::IdentityError)
         _ => SyncError::Unavailable,
     }
 }
-fn service(state: &AppState) -> Result<&super::Service, SyncError> {
+pub(super) fn service(state: &AppState) -> Result<&super::Service, SyncError> {
     state.sync.as_deref().ok_or(SyncError::Unavailable)
 }
 fn one(headers: &HeaderMap, name: &str) -> Result<String, SyncError> {
@@ -165,7 +168,7 @@ pub(crate) async fn authorize(
         },
     ))
 }
-fn decoded<const N: usize>(value: &str) -> Result<[u8; N], SyncError> {
+pub(super) fn decoded<const N: usize>(value: &str) -> Result<[u8; N], SyncError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(value)
         .map_err(|_| SyncError::Invalid)?;
@@ -175,43 +178,15 @@ fn decoded<const N: usize>(value: &str) -> Result<[u8; N], SyncError> {
     bytes.try_into().map_err(|_| SyncError::Invalid)
 }
 fn operation(dto: dto::SyncOperation, size: usize) -> Result<Operation, SyncError> {
-    if dto.schema_version != 2 || dto.base_revision < 0 {
-        return Err(SyncError::Invalid);
-    }
-    let ciphertext = URL_SAFE_NO_PAD
-        .decode(&dto.payload.ciphertext)
-        .map_err(|_| SyncError::Invalid)?;
-    if URL_SAFE_NO_PAD.encode(&ciphertext) != dto.payload.ciphertext {
-        return Err(SyncError::Invalid);
-    }
-    let operation = Operation {
-        id: dto.operation_id,
-        device: DeviceId::new(dto.device_id).map_err(|_| SyncError::Invalid)?,
-        entity_id: dto.entity_id,
-        base_revision: dto.base_revision as u64,
-        idempotency_key: dto.idempotency_key,
-        entity_kind: match dto.entity_type {
-            dto::EntityType::DeviceState => EntityKind::DeviceState,
-            dto::EntityType::ModuleState => EntityKind::ModuleState,
-            dto::EntityType::VaultRecord => EntityKind::VaultRecord,
-            dto::EntityType::AccountState => EntityKind::AccountState,
-            dto::EntityType::ClipboardItem => EntityKind::ClipboardItem,
-        },
-        payload: EncryptedPayload {
-            key_id: dto.payload.key_id,
-            nonce: decoded(&dto.payload.nonce)?,
-            ciphertext,
-        },
-    };
-    operation.validate(size)?;
-    Ok(operation)
+    Ok(super::codec::legacy(dto, size)?.operation)
 }
+
 async fn append(
     State(state): State<AppState>,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     body: Bytes,
-) -> Result<Response, ApiError> {
+) -> Result<Response, super::v3::LegacyError> {
     if body.len() > MAX_OPERATION_BYTES {
         return Err(SyncError::Invalid.into());
     }
@@ -220,8 +195,19 @@ async fn append(
     let dto: dto::SyncOperation = serde_json::from_slice(&body).map_err(|_| SyncError::Invalid)?;
     let operation = operation(dto, body.len())?;
     let value = service(&state)?
-        .append(&auth, signed, operation, body.to_vec(), now)
-        .await?;
+        .history
+        .append_versioned(
+            &auth,
+            signed,
+            nddev_device_sync_domain::sync::history::VersionedOperation {
+                operation,
+                version: nddev_device_sync_domain::sync::history::OperationVersion::V2,
+            },
+            body.to_vec(),
+            now,
+        )
+        .await
+        .map_err(super::v3::legacy_error)?;
     let status = StatusCode::from_u16(value.status).map_err(|_| SyncError::Unavailable)?;
     tracing::info!(
         module = "sync",
@@ -247,27 +233,50 @@ async fn page(
     headers: HeaderMap,
     query: Result<Query<Cursor>, QueryRejection>,
     body: Bytes,
-) -> Result<Json<dto::SyncPage>, ApiError> {
+) -> Result<Response, super::v3::LegacyError> {
     if !body.is_empty() {
         return Err(SyncError::Invalid.into());
     }
     let Query(cursor) = query.map_err(|_| SyncError::Invalid)?;
     let now = identity::now_ms().map_err(identity_error)?;
     let (auth, signed) = authorize(&state, &headers, "GET", &uri, &body, now).await?;
-    let page = service(&state)?
-        .page(
+    let p = service(&state)?
+        .history
+        .read_history_page(
             &auth,
             signed,
             cursor.after_seq.unwrap_or(0),
             cursor.limit.unwrap_or(2),
             now,
+            true,
         )
         .await?;
+    // V2 objects cannot represent a V3 original; never return a partial success or
+    // advance an old decoder over an unsupported version after activation.
+    for e in &p.contents.entries {
+        if serde_json::from_slice::<dto::SyncOperation>(&e.original.request_body).is_err() {
+            return Err(
+                nddev_device_sync_application::sync::history::HistoryFailure::Expired(
+                    nddev_device_sync_application::sync::history::ExpiredHistory {
+                        reason: nddev_device_sync_application::sync::history::ExpiredReason::Cursor,
+                        history: p.history,
+                    },
+                )
+                .into(),
+            );
+        }
+    }
+    let page = Page {
+        entries: p.contents.entries.into_iter().map(|e| e.original).collect(),
+        next_after: p.contents.next_after,
+        has_more: p.contents.has_more,
+    };
     Ok(Json(bounded_page(
         page,
         cursor.after_seq.unwrap_or(0),
         MAX_PAGE_BYTES,
-    )?))
+    )?)
+    .into_response())
 }
 
 /// Measure the actual wire entries, including base64 and result metadata. The

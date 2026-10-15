@@ -5,8 +5,8 @@ channel: alpha
 license: AGPL-3.0-only
 repository: NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-server
 standards_lock: standarts.lock
-core_commit: 75250e0e7297c214e36d057987ef328ea5543a4b
-protocol_commit: 0989a0a14d4f2f09746e6c81460c6af39c1c674e
-telemetry_commit: 38f48cf88fb2222d2ccde22460a8f2f564f8e47b
+core_commit: 889f0f4a9b6416e92eaaac111471a9d700ef8468
+protocol_commit: 70aacaed011aed54342b2dc079d4730fda9b2f02
+telemetry_commit: 40f1f799a395f67e7a565e9c0c9f4b5ba7fdbe67
 platforms:
   - linux
