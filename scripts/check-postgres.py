@@ -170,8 +170,14 @@ try:
         assert sql("UPDATE public.nds_replica_counters SET admission_version=3 WHERE false", "nds_runtime", check=False).returncode != 0
         if options.upgrade_from is not None:
             assert sql("SELECT value FROM nddev_schema_meta WHERE key='upgrade_acceptance'").stdout.strip() == "retained9"
+            server = subprocess.Popen([options.upgrade_from, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            wait_ready(port, 503)
+            server.terminate()
+            logs += server.communicate(timeout=25)[0]
+            assert server.returncode == 0
+            server = None
             clean(sql, upgrade_witness)
-            print("Schema9-to11 upgrade passed: seven canonical identity/device/vault/sync rows preserve original columns and decrypt after migration and repeat; schema9 readiness rejected; old migration history retained.")
+            print("Schema9-to11 upgrade passed: seven canonical identity/device/vault/sync rows preserve original columns and decrypt after migration and repeat; new runtime rejects schema9 and old runtime rejects schema11 readiness; old migration history retained.")
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0
