@@ -1,3 +1,5 @@
+#[cfg(test)]
+mod catalog_capacity_tests;
 pub(crate) mod codec;
 pub(crate) mod http;
 pub(crate) mod store;
