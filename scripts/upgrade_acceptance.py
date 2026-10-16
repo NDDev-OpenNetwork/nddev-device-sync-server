@@ -11,6 +11,7 @@ import json
 import secrets
 import time
 import uuid
+from pathlib import Path
 
 TABLES = ("nds_owner", "nds_devices", "nds_sessions", "nds_vault_keys",
           "nds_sync_counters", "nds_sync_entities", "nds_sync_operations")
@@ -122,6 +123,30 @@ def verify(sql, witness):
     assert rows["nds_sync_counters"]["server_seq"] == 1 and rows["nds_sync_entities"]["revision"] == 1
     witness["checks"] += 1
     print("Upgrade row witness check passed: " + json.dumps({table: hashlib.sha256(data).hexdigest() for table, data in current.items()}, sort_keys=True))
+
+
+def check_rejected_history(sql, witness):
+    # Execute the owning forward SQL in a transaction on generated schema9
+    # rows. Every failed transition must leave the original namespace/data and
+    # migration ledger intact; nothing is repaired or discarded automatically.
+    root = Path(__file__).resolve().parent.parent / 'migrations'
+    screen = (root / '0010_owned_screen.sql').read_text()
+    history = (root / '0011_sync_lifecycle.sql').read_text()
+    cases = {
+        'retained byte counter': 'UPDATE nds_sync_counters SET stored_bytes=stored_bytes+1;',
+        'committed sequence gap': 'UPDATE nds_sync_operations SET server_seq=2;',
+        'missing owner counter': 'DELETE FROM nds_sync_counters;',
+    }
+    for name, mutation in cases.items():
+        result = sql('BEGIN;\n' + screen + '\n' + mutation + '\n' + history + '\nROLLBACK;',
+                     'nds_migrator', check=False)
+        assert result.returncode != 0, f'migration accepted inconsistent {name}'
+        assert 'retained counter mismatch' in result.stderr, f'unexpected migration rejection: {name}'
+        assert snapshot(sql) == witness['rows'], f'failed migration changed original rows: {name}'
+        assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == '9'
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == '9'
+        assert sql("SELECT to_regclass('public.nds_replica_operations') IS NULL").stdout.strip() == 't'
+    print('Migration rejection passed: inconsistent byte count, sequence gap and missing counter abort without changing originals or schema.')
 
 
 def clean(sql, witness):

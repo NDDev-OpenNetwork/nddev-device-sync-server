@@ -151,8 +151,9 @@ try:
             assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "9"
             assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "9"
             sql("INSERT INTO nddev_schema_meta(key,value) VALUES('upgrade_acceptance','retained9')")
-            from upgrade_acceptance import prepare, verify, clean
+            from upgrade_acceptance import prepare, verify, clean, check_rejected_history
             upgrade_witness = prepare(sql)
+            check_rejected_history(sql, upgrade_witness)
             server = subprocess.Popen([BINARY, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             wait_ready(port, 503)
             server.terminate()

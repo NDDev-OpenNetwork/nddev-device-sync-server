@@ -64,10 +64,11 @@ DO $$ BEGIN
   WHERE o.status<>201 OR o.applied_revision<>e.revision OR o.request_body<>e.request_body) THEN
   RAISE EXCEPTION 'current original binding mismatch';
  END IF;
- IF EXISTS(SELECT 1 FROM public.nds_replica_counters c LEFT JOIN
-  (SELECT user_id,tenant_id,count(*) AS n,sum(2*request_bytes+result_bytes) AS bytes FROM public.nds_replica_operations GROUP BY user_id,tenant_id) o
+ IF EXISTS(SELECT 1 FROM public.nds_replica_counters c FULL JOIN
+  (SELECT user_id,tenant_id,count(*) AS n,max(server_seq) AS head,sum(2*request_bytes+result_bytes) AS bytes FROM public.nds_replica_operations GROUP BY user_id,tenant_id) o
   ON o.user_id=c.user_id AND o.tenant_id=c.tenant_id
-  WHERE c.server_seq<>c.operation_count OR c.operation_count<>COALESCE(o.n,0) OR c.stored_bytes<>COALESCE(o.bytes,0)) THEN
+  WHERE c.user_id IS NULL OR c.server_seq<>c.operation_count
+   OR c.server_seq<>COALESCE(o.head,0) OR c.operation_count<>COALESCE(o.n,0) OR c.stored_bytes<>COALESCE(o.bytes,0)) THEN
   RAISE EXCEPTION 'retained counter mismatch';
  END IF;
 END $$;
