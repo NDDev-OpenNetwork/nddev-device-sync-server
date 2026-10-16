@@ -165,86 +165,6 @@ async fn all_meta(
     }
     rows.iter().map(metadata).collect()
 }
-fn pressure_plan(
-    rows: &[RetainedMeta<'_>],
-    extra: RetainedMeta<'_>,
-    current: HistoryVersion,
-) -> Result<RetentionPlan, SyncError> {
-    let next = HistoryVersion {
-        head: extra.sequence,
-        ..current
-    };
-    let caps = RetentionCaps::default();
-    // A raised declaration under pressure is the explicit meaningful resolver
-    // path. Never bypass Core's witness/CAS contract with a generic older cut.
-    let previous = rows.iter().rev().find(|r| {
-        r.kind == extra.kind
-            && r.entity == extra.entity
-            && matches!(r.decision, Decision::Apply { .. })
-    });
-    let floor = previous.map_or(0, |r| match r.version {
-        OperationVersion::V2 => 0,
-        OperationVersion::V3 { lifecycle, .. } => lifecycle.resolved_through_seq,
-    });
-    let declared = match extra.version {
-        OperationVersion::V2 => 0,
-        OperationVersion::V3 { lifecycle, .. } => lifecycle.resolved_through_seq,
-    };
-    if declared > floor {
-        let witness = rows
-            .iter()
-            .filter(|r| {
-                r.kind == extra.kind
-                    && r.entity == extra.entity
-                    && matches!(r.decision, Decision::Conflict { .. })
-                    && r.sequence <= declared
-            })
-            .map(|r| r.sequence)
-            .collect::<Vec<_>>();
-        return atomic_resolution(rows, extra, &witness, current, current, caps);
-    }
-    // A failed CAS under pressure is not an opportunity to publish maintenance.
-    if !matches!(extra.decision, Decision::Apply { .. }) {
-        return Err(SyncError::CapacityExhausted);
-    }
-    // First find the earliest safe cut that fits, preserving the maximum possible
-    // suffix. Candidate changes occur only at existing Applied rows. No fixed age
-    // or guaranteed wave is invented; at most16 bounded Core plans, including the initial/final checks.
-    match retention_plan(rows, Some(extra), next, current.head, caps) {
-        Ok(last) => {
-            let mut cuts = rows
-                .iter()
-                .filter(|r| {
-                    r.sequence >= current.floor
-                        && r.sequence <= current.head
-                        && matches!(r.decision, Decision::Apply { .. })
-                })
-                .map(|r| r.sequence)
-                .collect::<Vec<_>>();
-            cuts.push(current.head);
-            cuts.sort_unstable();
-            cuts.dedup();
-            let (mut low, mut high) = (0, cuts.len() - 1);
-            let mut best = last;
-            while low < high {
-                let mid = low + (high - low) / 2;
-                match retention_plan(rows, Some(extra), next, cuts[mid], caps) {
-                    Ok(plan) => {
-                        best = plan;
-                        high = mid
-                    }
-                    Err(SyncError::CapacityExhausted) => low = mid + 1,
-                    Err(error) => return Err(error),
-                }
-            }
-            if best.base != cuts[low] {
-                best = retention_plan(rows, Some(extra), next, cuts[low], caps)?;
-            }
-            Ok(best)
-        }
-        Err(error) => Err(error),
-    }
-}
 struct PendingWrite<'a> {
     request: &'a VersionedOperation,
     body: &'a [u8],
@@ -572,14 +492,20 @@ impl HistoryStore for Store {
                         }
                     }
                 }
-                let plan = if c.count < MAX_OPERATIONS && c.bytes.checked_add(extra.cost()).is_some_and(|bytes| bytes <= MAX_STORED_BYTES) {
-                    None
-                } else {
+                let reserve = if c.mode == 3 && matches!(decision, Decision::Apply { .. }) {
+                    let devices: i64 = sqlx::query_scalar("SELECT count(*) FROM nds_devices WHERE user_id=$1 AND tenant_id=$2 AND status='active'")
+                        .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str())
+                        .fetch_one(&mut *tx).await.map_err(unavailable)?;
+                    nddev_device_sync_application::sync::retention_reserve_rows(counter(devices)?)?
+                } else { 0 };
+                let caps = RetentionCaps::default();
+                let plan = if caps.requires_retention(c.count, c.bytes, extra, reserve) {
                     if c.mode != 3 { return Err(SyncError::CapacityExhausted.into()); }
                     let metadata = all_meta(&mut tx, auth).await?;
                     let views = metadata.iter().map(Metadata::view).collect::<Vec<_>>();
-                    Some(pressure_plan(&views, extra, c.version)?)
-                };
+                    let plan = append_retention_plan(&views, extra, c.version, caps, reserve * 2)?;
+                    (plan.base > c.version.base).then_some(plan)
+                } else { None };
                 let out = StoredResult { status, body: result };
                 commit_original(&mut tx, auth, &signed, PendingWrite { request: &q, body: &body, out: &out, meta: extra }, &c, plan.as_ref()).await?;
                 Ok((out, AppendEffect::Committed { retention: plan.is_some() }))
@@ -709,7 +635,7 @@ mod tests {
         };
         let failed = m(3, None, 2);
         assert_eq!(
-            pressure_plan(&rows, failed, h).err(),
+            append_retention_plan(&rows, failed, h, RetentionCaps::default(), 0).err(),
             Some(SyncError::KeyConflict)
         );
         let rows = [
@@ -722,10 +648,20 @@ mod tests {
         ];
         let h = HistoryVersion { head: 3, ..h };
         assert_eq!(
-            pressure_plan(&rows, m(4, Some(2), 3), h).err(),
+            append_retention_plan(&rows, m(4, Some(2), 3), h, RetentionCaps::default(), 0).err(),
             Some(SyncError::Invalid)
         );
-        let plan = pressure_plan(&rows, m(4, Some(2), 2), h).unwrap();
+        let plan = append_retention_plan(
+            &rows,
+            m(4, Some(2), 2),
+            h,
+            RetentionCaps {
+                rows: 2,
+                ..RetentionCaps::default()
+            },
+            0,
+        )
+        .unwrap();
         assert_eq!(plan.base, 4);
         assert_eq!(plan.keep, vec![3, 4]);
     }

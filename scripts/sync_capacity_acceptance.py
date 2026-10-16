@@ -171,7 +171,10 @@ def check_capacity(send, key, device, operation, original_body, original, sql, r
         return tuple(bytes.fromhex(part) for part in row.split('|'))
 
     retired = original_at(1)
-    retained = original_at(2)
+    active_devices = int(sql("SELECT count(*) FROM nds_devices WHERE status='active'").stdout.strip())
+    wave = active_devices * 32
+    cut = 2 + 2 * wave
+    retained = original_at(cut)
     assert get('/v3/sync')['new_operation_version'] == 2
     update = current(16384, 16384)
     before = state()
@@ -188,13 +191,13 @@ def check_capacity(send, key, device, operation, original_body, original, sql, r
     result = send(key, device, '/v3/sync/operations', update)
     assert result[0] == 201, result
     assert json.loads(result[1])['server_seq'] == 16385
-    assert sql("SELECT floor_seq||'|'||base_seq FROM nds_replica_counters").stdout.strip() == '2|2'
-    assert original_at(2) == retained
-    assert json.loads(state())[1] == 16384
+    assert sql("SELECT floor_seq||'|'||base_seq FROM nds_replica_counters").stdout.strip() == f'{cut}|{cut}'
+    assert original_at(cut) == retained
+    assert json.loads(state())[1] == 16384 - 2 * wave
     assert send(key, device, path, retained[0]) == (201, retained[1])
     status, raw = send(key, device, path, retired[0])
     assert status == 410 and json.loads(raw) == {'error': 'cursor_expired'}
-    base = get('/v3/sync/base?base_seq=2&after_member_seq=0&limit=1')
+    base = get(f'/v3/sync/base?base_seq={cut}&after_member_seq=0&limit=1')
     assert base['total_members'] == 1 and not base['has_more']
     assert base['entries'][0]['operation_body'].encode() == retained[0]
     assert base['entries'][0]['result_body'].encode() == retained[1]
@@ -209,10 +212,14 @@ def check_capacity(send, key, device, operation, original_body, original, sql, r
     assert send(key, device, path + '?after_seq=16384')[0] == 410
     restart()
     assert send(key, device, '/v3/sync/operations', update) == result
-    assert get('/v3/sync/base?base_seq=2&after_member_seq=0') == base
+    assert get(f'/v3/sync/base?base_seq={cut}&after_member_seq=0') == base
     second = current(16385, 16385)
     assert send(key, device, '/v3/sync/operations', second)[0] == 201
-    status, raw = send(key, device, '/v3/sync/base?base_seq=2&after_member_seq=0')
+    assert get(f'/v3/sync/base?base_seq={cut}&after_member_seq=0') == base
+    # Headroom preserves the checkpoint across the following bounded wave.
+    for head in range(16386, 16386 + wave):
+        assert send(key, device, '/v3/sync/operations', current(head, head))[0] == 201
+    status, raw = send(key, device, f'/v3/sync/base?base_seq={cut}&after_member_seq=0')
     assert status == 410 and json.loads(raw)['error'] == 'checkpoint_expired'
     assert sql("SELECT operation_count=(SELECT count(*) FROM nds_replica_operations) "
                "AND stored_bytes=(SELECT sum(2*request_bytes+result_bytes) FROM nds_replica_operations) "
@@ -235,19 +242,26 @@ def check_capacity(send, key, device, operation, original_body, original, sql, r
     resolver = current(16384, 16382, 16383)
     resolution = send(key, device, '/v3/sync/operations', resolver)
     assert resolution[0] == 201 and json.loads(resolution[1])['revision'] == 16383
-    base = get('/v3/sync/base?base_seq=16385&after_member_seq=0')
-    assert [entry['server_seq'] for entry in base['entries']] == [16384, 16385]
-    assert base['entries'][0]['operation_body'].encode() == conflicts[1][0]
-    assert base['entries'][0]['result_body'].encode() == conflicts[1][1][1]
-    assert base['entries'][0]['result_status'] == 409
-    assert base['entries'][1]['operation_body'].encode() == resolver
-    assert base['entries'][1]['result_body'].encode() == resolution[1]
-    assert send(key, device, '/v3/sync/operations', conflicts[1][0]) == conflicts[1][1]
-    status, raw = send(key, device, '/v3/sync/operations', conflicts[0][0])
-    assert status == 410 and json.loads(raw)['error'] == 'basis_expired'
+    base = get(f'/v3/sync/base?base_seq={cut}&after_member_seq=0')
+    assert [entry['server_seq'] for entry in base['entries']] == [cut]
+    delta = get('/v3/sync/history?after_seq=16382')
+    assert [entry['server_seq'] for entry in delta['entries']] == [16383, 16384, 16385]
+    # The earlier cut keeps both original conflict receipts replayable. Only the
+    # witnessed one is resolved by the committed lifecycle; the later one survives.
+    for index, conflict in enumerate(conflicts):
+        entry = delta['entries'][index]
+        assert entry['operation_body'].encode() == conflict[0]
+        assert entry['result_body'].encode() == conflict[1][1]
+        assert entry['result_status'] == 409
+        assert send(key, device, '/v3/sync/operations', conflict[0]) == conflict[1]
+    assert delta['entries'][2]['operation_body'].encode() == resolver
+    assert delta['entries'][2]['result_body'].encode() == resolution[1]
+    assert json.loads(resolver)['lifecycle']['resolved_through_seq'] == 16383
+    assert json.loads(state())[1] == 16384 - 2 * wave
     restart()
     assert send(key, device, '/v3/sync/operations', resolver) == resolution
-    assert get('/v3/sync/base?base_seq=16385&after_member_seq=0') == base
+    assert get(f'/v3/sync/base?base_seq={cut}&after_member_seq=0') == base
+    assert get('/v3/sync/history?after_seq=16382') == delta
     print("Signed lifecycle acceptance passed: explicit admission, full-history CAS rejection, "
           "bounded retirement, exact original replay/base/delta, witnessed conflict resolution "
           "preserving newer alternatives, expiry and restart.")
