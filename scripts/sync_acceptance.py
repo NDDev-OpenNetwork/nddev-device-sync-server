@@ -145,7 +145,7 @@ def check_sync(request, token, restart, directory, sql, origin):
     assert status==200 and json.loads(raw)=={'entries':[],'next_after_seq':130,'has_more':False}
     for limit in [0,101]:
         assert send(second,id2,f'/v2/sync/operations?after_seq=0&limit={limit}')[0]==400
-    check_capacity(send, first, id1, operation, body, original, sql)
+    check_capacity(send, first, id1, operation, body, original, sql, restart)
     assert request('/v2/devices/'+id1,token=token,method='DELETE')[0]==204
     assert send(first,id1,'/v2/sync/operations',body)[0]==403
     assert send(first,id1,'/v2/sync/operations?after_seq=0')[0]==403
