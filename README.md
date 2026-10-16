@@ -103,3 +103,8 @@ validates it with a private Python trust context and writes only its certificate
 path/public-key digest to the private receipt. A test browser must trust that
 exact fixture certificate independently; no system trust or live certificate
 is changed. This option is confined to the acceptance harness.
+
+Client catalog acceptance uses `--fixture-sync3` with `--fixture-receipt`.
+The fixture operator explicitly admits current writes only after the client
+creates its empty owner counter. Migration defaults and existing histories are
+unchanged; the real client must negotiate the admitted format.
