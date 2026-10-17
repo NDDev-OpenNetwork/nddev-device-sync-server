@@ -186,9 +186,9 @@ def check_company_identity(request, sql, mailbox, http, pepper, restart, directo
         status, device = request("/v2/devices/enrollments", {"challenge_id": receipt["challenge_id"], "signature": encode(sign(key, b"NDS-ENROLLMENT-V2\0" + base64.urlsafe_b64decode(receipt["challenge"] + "=")))}, token=token)
         assert status == 201
         return key, device["device_id"], public
-    def signed(device, token, path, body=None, *, nonce=None, expiry=None):
+    def signed(device, token, path, body=None, *, nonce=None, expiry=None, method=None):
         key, identifier, _ = device
-        method = "GET" if body is None else "POST"
+        method = method or ("GET" if body is None else "POST")
         raw = b"" if body is None else (body if isinstance(body, bytes) else json.dumps(body, separators=(",", ":")).encode())
         digest = "sha-256=:" + base64.b64encode(hashlib.sha256(raw).digest()).decode() + ":"
         now = int(time.time())

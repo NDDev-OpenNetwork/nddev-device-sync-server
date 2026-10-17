@@ -119,6 +119,35 @@ def check_company_management(*, signed, request, sql, challenge, verify, enroll,
     assert call(member, "/v2/company/members", nonce=nonce)[0] == 403
     assert call(member, "/v2/company/members", nonce=nonce) == (409, {"error": "replayed_nonce"})
 
+    def targets(actor, selected):
+        status, page = call(actor, "/v2/rds/targets/" + selected[2])
+        assert status == 200 and set(page) == {"user_id", "targets"}
+        assert page["user_id"] == selected[2] and len(page["targets"]) <= 32
+        personal, cursor = [], None
+        for _ in range(5):
+            status, inventory = request("/v2/devices" + ("?cursor=" + cursor if cursor else ""), token=selected[1])
+            assert status == 200
+            personal += inventory["devices"]
+            cursor = inventory["next_cursor"]
+            if cursor is None: break
+        else: raise AssertionError("owned inventory did not terminate within its retained-device bound")
+        active = {row["device_id"]: row for row in personal if row["status"] == "active"}
+        # Both views retain the canonical enrollment order, independent of DB locale.
+        assert [row["device_id"] for row in page["targets"]] == list(active)
+        for row in page["targets"]:
+            assert set(row) == {"device_id", "display_name", "platform", "registered"}
+            assert row["display_name"] == active[row["device_id"]]["display_name"]
+            assert row["platform"] == active[row["device_id"]]["platform"]
+        return page["targets"]
+
+    assert all(not row["registered"] for row in targets(admin, member))
+    assert targets(member, member) == targets(admin, member)
+    for actor, selected in [(member, admin), (member, foreign), (admin, foreign), (foreign, member)]:
+        assert call(actor, "/v2/rds/targets/" + selected[2])[0] == 403
+    assert call(admin, "/v2/rds/targets/" + str(uuid.uuid4()))[0] == 403
+    assert call(admin, "/v2/rds/targets/" + member[2] + "?limit=1024")[0] == 400
+    assert call(admin, "/v2/rds/targets/" + member[2], b"{}", method="GET")[0] == 400
+
     # Retire an actual successful command only after its real five-minute window.
     expiry_start = time.monotonic()
     expiry_body, expiry_invite, _ = invite(admin, duplicate=True)
@@ -220,6 +249,14 @@ def check_company_management(*, signed, request, sql, challenge, verify, enroll,
     ready(own)
     end(host,own)
 
+    # Full per-user target bound uses actual enrollment proofs, not synthetic
+    # device rows or a reset of the enrollment budget.
+    for _ in range(30):
+        enroll(member[1])
+    discovered = targets(authority, member)
+    assert len(discovered) == 32
+    assert {row["device_id"] for row in discovered if row["registered"]} == {member[0][1], host[0][1]}
+
     # Two genuinely different administrators compete for the same immutable host.
     promoted = member_row(authority,demoted[2])
     assert change(authority,demoted[2],promoted["revision"],"admin")[1][0] == 200
@@ -251,6 +288,8 @@ def check_company_management(*, signed, request, sql, challenge, verify, enroll,
     assert call(host,path+"/ready",{"native_grant":"AA"})[0] == 403
     assert call(winner,"/v2/rds/views",requests[winner_index])[0] == 403
     assert call(winner,"/v2/rds/bindings/"+host[0][1])[0] == 403
+    assert call(winner,"/v2/rds/targets/"+member[2])[0] == 403
+    assert targets(winner, winner)
     assert request("/v2/session",token=winner[1])[0] == 200
     end(host,view) # Cleanup remains allowed for the actual host after viewer demotion.
     current = member_row(outsider,winner[2])
@@ -275,11 +314,12 @@ def check_company_management(*, signed, request, sql, challenge, verify, enroll,
     # Membership removal retires a cross-user view and keeps personal Vault rows.
     _, view = create_view(authority,host)
     ready(view)
-    print("Company RDS authority passed: separate users, signed binding policy, own-device access, cross-user admin access, cross-company/user denial, participant-only artifacts, shared host admission, restart, demotion/repromotion and original-viewer-session revocation.", flush=True)
+    print("Company RDS authority passed: minimal signed32-device discovery, separate users, signed binding policy, own-device access, cross-user admin access, cross-company/user denial, participant-only artifacts, shared host admission, restart, demotion/repromotion and original-viewer-session revocation.", flush=True)
     revision = member_row(authority, member[2])["revision"]
     payload, removed = change(authority, member[2], revision)
     assert removed[0] == 200 and removed[1]["active"] is False
     assert request("/v2/session", token=member[1])[0] == 401
+    assert call(authority,"/v2/rds/targets/"+member[2])[0] == 403
     assert sql(f"SELECT state||':'||(native_grant IS NULL)::text FROM nds_screen_views WHERE view_id={literal(view['view_id'])}").stdout.strip() == "ended:true"
     assert call(authority, "/v2/company/members/" + member[2], payload) == removed
     assert change(authority, member[2], revision)[1] == (409, {"error": "operation_conflict"})

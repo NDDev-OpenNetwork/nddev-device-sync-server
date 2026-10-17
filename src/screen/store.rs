@@ -4,8 +4,8 @@ use nddev_device_sync_application::{
     sync::{AuthenticatedSession, SignedRequest, SyncError},
 };
 use nddev_device_sync_domain::{
-    DeviceId,
-    devices::{Device, DeviceStatus},
+    DeviceId, UserId,
+    devices::{Device, DeviceStatus, MAX_ACTIVE_DEVICES},
     identity::{IdentityError, Owner, ProtectedDigest},
     modules::ModuleError,
     organizations::Membership,
@@ -238,6 +238,37 @@ async fn revalidate(
     )
 }
 impl ScreenStore for Store {
+    async fn targets(
+        &self,
+        auth: &AuthenticatedSession,
+        signed: SignedRequest,
+        user: &UserId,
+        now: u64,
+    ) -> Result<Vec<ScreenTarget>, ScreenError> {
+        bounded(async {
+            let mut tx = self.identity.transaction().await.map_err(unavailable)?;
+            let result = async {
+                authorize(&mut tx, auth, &signed, now).await?;
+                let owner = Owner { user_id: user.clone(), tenant_id: auth.session.owner.tenant_id.clone() };
+                let actor = membership(&mut tx, &auth.session.owner).await?;
+                let target = membership(&mut tx, &owner).await?;
+                actor.authorize_screen(&auth.session.owner, &target).map_err(|_| ScreenError::Denied)?;
+                let rows = sqlx::query("SELECT d.*,b.device_id IS NOT NULL AS screen_registered FROM nds_devices d LEFT JOIN nds_screen_bindings b ON b.device_id=d.device_id AND b.user_id=d.user_id AND b.tenant_id=d.tenant_id WHERE d.user_id=$1 AND d.tenant_id=$2 AND d.status='active' ORDER BY d.ordinal LIMIT $3")
+                    .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str())
+                    .bind((MAX_ACTIVE_DEVICES + 1) as i64)
+                    .fetch_all(&mut *tx).await.map_err(unavailable)?;
+                if rows.len() > MAX_ACTIVE_DEVICES { return Err(unavailable(())); }
+                rows.iter().map(|row| {
+                    let device = crate::devices::store::device(row).map_err(unavailable)?;
+                    Ok(ScreenTarget {
+                        device: device.id, name: device.name, platform: device.platform,
+                        registered: row.try_get("screen_registered").map_err(unavailable)?,
+                    })
+                }).collect()
+            }.await;
+            finish(tx, result).await
+        }).await
+    }
     async fn binding(
         &self,
         auth: &AuthenticatedSession,
