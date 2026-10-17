@@ -7,9 +7,7 @@ pub mod http;
 pub(crate) mod store;
 
 use config::AuthConfig;
-use nddev_device_sync_application::identity::{
-    IdentityBinding, IdentityCrypto, IdentityError, IdentityService,
-};
+use nddev_device_sync_application::identity::{IdentityCrypto, IdentityError, IdentityService};
 use std::{
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
@@ -33,8 +31,9 @@ pub async fn initialize(
     let _ = rustls::crypto::ring::default_provider().install_default();
     let store = store::Store::new(pool);
     let github_id = config.github.as_ref().map(|github| github.owner_id);
-    let owner = store
+    store
         .bootstrap(
+            &config.owner_email,
             config
                 .crypto
                 .protect("owner_binding", &[config.owner_email.as_str().as_bytes()]),
@@ -49,11 +48,6 @@ pub async fn initialize(
         email,
         github,
         flows::Flows::default(),
-        IdentityBinding {
-            owner,
-            email: config.owner_email.clone(),
-            github_id,
-        },
     );
     let methods = service.methods();
     tracing::info!(

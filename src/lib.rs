@@ -6,6 +6,7 @@ pub mod devices;
 pub mod identity;
 pub mod logging;
 pub mod observability;
+mod organizations;
 pub mod passkeys;
 pub mod protocol_devices;
 pub mod protocol_observability;

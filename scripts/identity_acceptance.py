@@ -18,6 +18,7 @@ from enrollment_acceptance import check_enrollment
 from sync_acceptance import check_sync
 from screen_acceptance import check_screen
 from browser_acceptance import check_browser
+from company_identity_acceptance import check_company_identity
 
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
 
@@ -334,6 +335,7 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             assert request("/v2/session", token=recent)[0] == 200
             assert request("/v2/session", method="DELETE", token=recent)[0] == 204
             print("Recent-authentication scope passed: aged valid session retains ordinary access after credential-management rejection.")
+        sensitive += check_company_identity(request, sql, mail_url, http, pepper, restart_enrollment, directory, origin)
         sql("DELETE FROM nds_auth_limits; DELETE FROM nds_email_challenges;")
         command("docker", "stop", "--time", "5", mailbox)
         created = False

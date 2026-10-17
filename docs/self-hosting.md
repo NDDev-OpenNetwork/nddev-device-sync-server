@@ -94,7 +94,7 @@ Release deployments must instead consume the reviewed built image by digest.
 
 The server exposes `/v1/health`, `/v1/ready`, `/source` and the implemented v2
 identity/device routes, with request IDs and `Cache-Control: no-store`. Identity is
-unavailable until configured privately. `/v1/ready` requires schema version 10;
+unavailable until configured privately. `/v1/ready` requires schema version 12;
 use the explicit migrator before starting the updated runtime. The observability
 pipeline remains a separate slice.
 
@@ -141,7 +141,7 @@ separate reviewed operation. Public registration is absent.
 
 Email challenges use eight-digit codes, five-minute expiry, five attempts and
 a sixty-second resend delay. A permitted resend invalidates the previous code.
-Subject limits allow five challenges/hour and source limits ten starts/fifteen
+Subject limits allow 32 challenges/hour and source limits ten starts/fifteen
 minutes. Source identity uses the socket IP; forwarding headers and ephemeral
 ports cannot change it. Store protected HMAC verifiers, never plaintext codes.
 Responses are generic for permitted and other valid mailboxes. SMTP uses a
@@ -158,7 +158,7 @@ seconds and consumes its opaque exchange capability once. An interrupted or
 failed exchange may require starting sign-in again.
 
 All three methods issue the same eight-hour owner session; at most 32 active sessions
-are retained. Session digests persist in PostgreSQL; GET `/v2/session` validates
+are retained per user. Session digests persist in PostgreSQL; GET `/v2/session` validates
 ownership/expiry and DELETE revokes the current session. Vault delivery additionally requires active enrolled device proof; a session
 does not regenerate lost device or vault keys. Expired challenge/session/rate state is pruned on
 identity activity within fixed table capacities. Pending SMTP work is discarded
@@ -186,9 +186,9 @@ the same initiating session, rechecked and locked inside the database transactio
 A challenge lasts at most five minutes and no longer than that session, allows
 five attempts and is consumed once. Expired or exhausted proof cannot revive.
 
-Personal alpha bounds are eight pending challenges, 32 active devices and 128
-retained device identities per owner. Source limits allow ten starts per fifteen
-minutes and use the socket IP. Terminal challenge rows are discarded on new
+Per-user bounds are eight pending challenges, 32 active devices and 128
+retained device identities. Authenticated enrollment allows 32 starts per hour
+per owner, separately from the unauthenticated sign-in source budget. Terminal challenge rows are discarded on new
 enrollment activity. Device rows persist: revocation is terminal for that public
 key, and retained-identity exhaustion fails closed until a separately reviewed
 lifecycle change exists. No automatic pruning or key rotation is implemented.
@@ -364,7 +364,7 @@ legacy outcomes and expired basis/cursor/checkpoint are explicit refusals, never
 replacement operations or success receipts. Commit telemetry is emitted only
 after the database confirms the transaction.
 
-Readiness requires schema 11. The old SQL table names no longer exist; stop old
+Readiness requires schema 12. The old SQL table names no longer exist; stop old
 server writers before deploying this schema. Build/unit and ordinary isolated
 PostgreSQL tests do not establish old-binary exclusion, lost-commit-acknowledgement
 handling or physical storage-failure qualification. Qualify those deployment
@@ -375,7 +375,7 @@ live migration or retention change.
 
 Schema 10 adds current endpoint binding rows and finite screen intent/receipt
 rows. Apply the append-only migration with the existing migrator credential;
-Current readiness requires schema11. The runtime role has only the needed
+Current readiness requires schema12. The runtime role has only the needed
 SELECT/INSERT, binding transition and view state/grant UPDATE, and expired-view
 DELETE privileges. It cannot change owner/session references, original request,
 profile/admission/expiry, delete binding CAS history or perform DDL/TRUNCATE.
@@ -413,11 +413,11 @@ The owning PostgreSQL/SMTP gate uses fresh enrollment and independent OpenSSL
 HTTP/endpoint signatures, tests races, exact artifact/receipt replay, cap, expiry,
 clock floor, session/device revocation, timeout and runtime privileges. Its opaque
 server artifact fixture is not claimed to be a valid native grant. To additionally
-exercise schema9-to11 with a preserved schema9 server binary outside this checkout,
+exercise schema9-to12 with a preserved schema9 server binary outside this checkout,
 the optional upgrade fixture requires `cryptography==50.0.2` in its Python
 environment. It uses real AES-256-GCM for seven bounded existing rows in owner,
 device, session, vault envelope, sync counter/entity/operation tables. Canonical
-original column bytes and digests are checked after migration11 and its repeat; envelope
+original data columns and digests are checked after migration12 and its repeat; envelope
 and record decryption remain valid. These are isolated storage witnesses, not
 fabricated authenticated NDS sessions. The existing real HTTP/PG/SMTP checks
 run after scoped witness cleanup:
@@ -428,3 +428,37 @@ python3 scripts/check-postgres.py --fixture-passkeys --upgrade-from /ABS/PREVIOU
 
 This gate owns ephemeral PostgreSQL/SMTP only and does not deploy or establish
 native capture, protected Accounts storage or shared Flutter runtime acceptance.
+
+## Company identity and schema 12
+
+The existing tenant becomes a company and the configured bootstrap owner becomes
+its administrator. User, tenant, device, key-envelope and encrypted-operation
+identities remain unchanged; only the obsolete singleton column is removed.
+Each user belongs to one company. Existing eligible OTP challenges are bound to
+the established bootstrap principal without changing their verifier or expiry.
+
+`POST /v2/auth/invitations/challenges` accepts email, invitation ID and protected
+link possession, then uses the ordinary email verification endpoint. Link
+possession alone creates neither a member nor a session. Acceptance rechecks
+current inviting authority, intended recipient, expiry and status in the same
+transaction as activation and session creation. Reinvitation retains the original
+user/Vault binding and invalidates all prior sessions. Normal sign-in, personal
+sync, device actions and passkey mutations check current active membership.
+Role alone never grants another user's Vault, credentials or GDS stream.
+
+Passkey login accepts an email account selector. Omission is accepted only when
+there is exactly one active account. Registration uses its authenticated session
+and rejects a selector. Neither email selection nor global method availability
+is proof of user verification. WebAuthn credential proof is still required.
+
+Administrative invitation issuance and membership-management APIs, cross-user
+RDS and client presentation remain unimplemented in this slice. The ordinary
+PostgreSQL/SMTP gate seeds pending invitation metadata only and exercises actual
+recipient OTP verification, concurrent consume, issuer loss, expiry, revocation,
+per-user session capacity, key isolation, restart and reinvitation. It does not
+claim an invitation-delivery UI or multiple-user WebAuthn browser acceptance.
+
+With `cryptography==50.0.2`, add `--upgrade-company` to the PostgreSQL gate to
+exercise production 11-to12 SQL in a separate disposable database. Existing
+encrypted witnesses remain decryptable and old OTP state is preserved. This
+supplements fresh SQLx migration/repeat checks; it does not authorize deployment.
