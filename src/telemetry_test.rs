@@ -19,6 +19,49 @@ impl SpanExporter for Captured {
 }
 
 pub(crate) fn capture() -> (tracing::Dispatch, SdkTracerProvider, Captured) {
+    capture_to(std::io::sink())
+}
+
+#[derive(Clone, Default)]
+pub(crate) struct Events(Arc<Mutex<Vec<u8>>>);
+impl std::io::Write for Events {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let mut output = self.0.lock().unwrap();
+        assert!(
+            output.len() + bytes.len() <= 65_536,
+            "bounded event collector"
+        );
+        output.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+impl Events {
+    pub(crate) fn values(&self) -> Vec<serde_json::Value> {
+        let output = self.0.lock().unwrap();
+        String::from_utf8(output.clone())
+            .unwrap()
+            .lines()
+            .map(|line| {
+                let value: serde_json::Value = serde_json::from_str(line).unwrap();
+                nddev_device_sync_telemetry::decode_event(value.clone()).unwrap();
+                assert!(
+                    !value["event.name"]
+                        .as_str()
+                        .unwrap()
+                        .starts_with("logging.")
+                );
+                value
+            })
+            .collect()
+    }
+}
+
+pub(crate) fn capture_to(
+    writer: impl std::io::Write + Send + Sync + 'static,
+) -> (tracing::Dispatch, SdkTracerProvider, Captured) {
     let captured = Captured::default();
     let provider = SdkTracerProvider::builder()
         .with_simple_exporter(captured.clone())
@@ -35,11 +78,8 @@ pub(crate) fn capture() -> (tracing::Dispatch, SdkTracerProvider, Captured) {
         default_module: "process".into(),
         debug: None,
     };
-    let (subscriber, _) = nddev_device_sync_telemetry::subscriber(
-        config,
-        std::io::sink(),
-        provider.tracer("server-test"),
-    )
-    .unwrap();
+    let (subscriber, _) =
+        nddev_device_sync_telemetry::subscriber(config, writer, provider.tracer("server-test"))
+            .unwrap();
     (tracing::Dispatch::new(subscriber), provider, captured)
 }

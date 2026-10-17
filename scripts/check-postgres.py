@@ -22,7 +22,8 @@ arguments.add_argument("--observability-config", type=Path, help="Explicit owned
 arguments.add_argument("--fixture-seconds", type=int, default=1200)
 arguments.add_argument("--fixture-tls", action="store_true", help="Owned ephemeral localhost TLS certificate for browser release acceptance")
 arguments.add_argument("--fixture-passkeys", action="store_true", help="Use the localhost secure browser origin for owned passkey acceptance")
-arguments.add_argument("--upgrade-from", type=Path, help="Existing immutable Server21 binary outside this repository, for real schema9-to10 acceptance")
+arguments.add_argument("--fixture-sync3", action="store_true", help="Explicitly admit current writes for the fresh, empty fixture owner")
+arguments.add_argument("--upgrade-from", type=Path, help="Existing immutable schema9 server binary outside this repository, for real upgrade acceptance")
 arguments.add_argument("--fixture-web-root", type=Path, help="Owned manifest-verified browser test bundle, served by the real server")
 options = arguments.parse_args()
 if options.upgrade_from is not None:
@@ -30,6 +31,8 @@ if options.upgrade_from is not None:
         arguments.error("upgrade source must be an explicit existing binary outside the repository")
 if options.fixture_tls and options.fixture_receipt is None:
     arguments.error("TLS browser acceptance requires an owned fixture")
+if options.fixture_sync3 and options.fixture_receipt is None:
+    arguments.error("sync admission requires an owned client fixture")
 if not 60 <= options.fixture_seconds <= 3600:
     arguments.error("fixture lifetime must be 60..3600 seconds")
 if options.fixture_receipt is not None:
@@ -40,7 +43,7 @@ if options.fixture_receipt is not None:
 
 ROOT = Path(__file__).resolve().parent.parent
 IMAGE = "postgres:18.6-bookworm@sha256:afc7e2d441324c0388fa80c3d24f733b4194a4eb7f47dd8ee2b08eb1a24a647c"
-BINARY = ROOT / "target/debug/nddev-device-sync-server"
+BINARY = Path(os.environ.get("CARGO_TARGET_DIR", ROOT / "target")) / "debug/nddev-device-sync-server"
 name = "nds-db-check-" + uuid.uuid4().hex[:12]
 created = False
 server = None
@@ -151,8 +154,9 @@ try:
             assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "9"
             assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "9"
             sql("INSERT INTO nddev_schema_meta(key,value) VALUES('upgrade_acceptance','retained9')")
-            from upgrade_acceptance import prepare, verify, clean
+            from upgrade_acceptance import prepare, verify, clean, check_rejected_history
             upgrade_witness = prepare(sql)
+            check_rejected_history(sql, upgrade_witness)
             server = subprocess.Popen([BINARY, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
             wait_ready(port, 503)
             server.terminate()
@@ -163,11 +167,20 @@ try:
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
             if upgrade_witness is not None:
                 verify(sql, upgrade_witness)
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "10"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "11"
+        assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "11"
+        assert sql("SELECT to_regclass('public.nds_sync_operations') IS NULL").stdout.strip() == "t"
+        assert sql("UPDATE public.nds_replica_counters SET admission_version=3 WHERE false", "nds_runtime", check=False).returncode != 0
         if options.upgrade_from is not None:
             assert sql("SELECT value FROM nddev_schema_meta WHERE key='upgrade_acceptance'").stdout.strip() == "retained9"
+            server = subprocess.Popen([options.upgrade_from, "serve"], env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            wait_ready(port, 503)
+            server.terminate()
+            logs += server.communicate(timeout=25)[0]
+            assert server.returncode == 0
+            server = None
             clean(sql, upgrade_witness)
-            print("Schema9-to10 upgrade passed: seven canonical identity/device/vault/sync rows preserve all bytes and decrypt after migration10 and repeat; schema9 readiness rejected; old migration history retained.")
+            print("Schema9-to11 upgrade passed: seven canonical identity/device/vault/sync rows preserve original columns and decrypt after migration and repeat; new runtime rejects schema9 and old runtime rejects schema11 readiness; old migration history retained.")
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0
@@ -225,7 +238,7 @@ try:
         for event_name in ["database.migration.started", "database.migration.completed", "process.failed", "admission.saturated", "admission.recovered"]:
             assert any(event["event.name"] == event_name for event in events)
         print("PostgreSQL acceptance passed: migrations replay safely; restricted runtime performs no DDL; real database contention proves bounded request admission and recovery; process/migration envelopes and secrets are verified.")
-        check_identity(BINARY, directory, env, sql, command, validate_events, options.fixture_receipt, options.fixture_seconds, options.fixture_passkeys, options.fixture_tls)
+        check_identity(BINARY, directory, env, sql, command, validate_events, options.fixture_receipt, options.fixture_seconds, options.fixture_passkeys, options.fixture_tls, options.fixture_sync3)
 finally:
     if lock_holder is not None:
         lock_holder.terminate()

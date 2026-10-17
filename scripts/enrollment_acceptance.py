@@ -166,10 +166,14 @@ def check_enrollment(request, token, second_session, restart, directory, sql):
 
     platforms = ["linux","macos","windows","ios","android","web"]
     active = []
+    # A fresh owner window admits the full fleet without intermediate resets.
+    sql("DELETE FROM nds_auth_limits;")
     for index in range(32):
-        if index % 8 == 0: sql("DELETE FROM nds_auth_limits;")
         new_path,new_public = key()
         active.append(enroll(new_path,new_public,platforms[index % len(platforms)]))
+    assert challenge(spare_public) == (429,{"error":"rate_limited"})
+    # Exercise the independent active-device bound with an available rate window.
+    sql("DELETE FROM nds_auth_limits;")
     assert challenge(spare_public) == (503,{"error":"server_busy"})
     for value in active:
         assert request("/v2/devices/" + value["device_id"],token=token,method="DELETE")[0] == 204
@@ -181,9 +185,9 @@ def check_enrollment(request, token, second_session, restart, directory, sql):
         assert request("/v2/devices/" + value["device_id"],token=token,method="DELETE")[0] == 204
     assert sql("SELECT count(*) FROM nds_devices").stdout.strip() == "128"
     sql("DELETE FROM nds_auth_limits;")
-    for index in range(11):
+    for index in range(33):
         status,_ = request("/v2/devices/challenges",{"platform":"linux","display_name":"Synthetic","public_key":spare_public},token=token,headers={"X-Forwarded-For":f"192.0.2.{index+1}"})
-        assert status == (503 if index < 10 else 429), "device-source budget trusted unowned forwarding headers"
+        assert status == (503 if index < 32 else 429), "owner enrollment budget trusted unowned forwarding headers"
 
     seen = set()
     cursor = None
@@ -197,5 +201,5 @@ def check_enrollment(request, token, second_session, restart, directory, sql):
         assert (cursor is None) == (page_number == 3)
     assert len(seen) == 128
     assert sql("SELECT count(*) FROM information_schema.columns WHERE table_name IN ('nds_devices','nds_enrollment_challenges') AND column_name LIKE '%private%'").stdout.strip() == "0"
-    print("Enrollment acceptance passed on the Linux server: real OpenSSL proofs with all six platform values; strict key rejection before allocation; same-session and concurrent consume; both PostgreSQL-locked revoke/enroll orderings; restart, expiry, attempts and key uniqueness; actual 8/32/128 capacities; finite owner cursor pages and socket-source bounds.")
+    print("Enrollment acceptance passed on the Linux server: real OpenSSL proofs with all six platform values; strict key rejection before allocation; same-session and concurrent consume; both PostgreSQL-locked revoke/enroll orderings; restart, expiry, attempts and key uniqueness; actual 8/32/128 capacities;32 enrollments in one untouched owner window; finite owner cursor pages and bounded enrollment despite untrusted forwarding headers.")
     return sensitive
