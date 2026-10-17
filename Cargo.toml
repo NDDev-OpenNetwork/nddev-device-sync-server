@@ -18,8 +18,8 @@ zeroize = "1.8"
 webauthn-rs = { version = "=0.5.5", default-features = false }
 libc = "0.2"
 hyper-util = { version = "0.1", default-features = false, features = ["tokio"] }
-nddev-device-sync-domain = { git = "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-core.git", rev = "8304a251f903b89b7169c8fb2d12a8ffd7666124" }
-nddev-device-sync-application = { git = "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-core.git", rev = "8304a251f903b89b7169c8fb2d12a8ffd7666124" }
+nddev-device-sync-domain = { git = "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-core.git", rev = "cb1803cd370b07e93fedc436ee3b6580db150329" }
+nddev-device-sync-application = { git = "https://github.com/NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-core.git", rev = "cb1803cd370b07e93fedc436ee3b6580db150329" }
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "builder", "tokio1-rustls-tls"] }
 reqwest = { version = "0.13.3", default-features = false, features = ["rustls-no-provider", "form", "json"] }
 ring = "0.17"

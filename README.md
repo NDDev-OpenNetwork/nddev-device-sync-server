@@ -31,8 +31,10 @@ rules and the shared replica policy.
 
 Company identity storage preserves existing user/device/Vault bindings. Personal
 data remains owner-only, including for administrators. The administrative API and
-SMTP invitation/OTP path are implemented; native/web company screens, invitation
-fragment handling and cross-user RDS are separate client work. Global monitoring
+SMTP invitation/OTP path are implemented. RDS control metadata permits current
+same-company administrators to request another member's device while retaining
+participant-only grants and current-session/membership revalidation. Device
+discovery and end-to-end screen capture remain separate client acceptance. Global monitoring
 controls remain bound to the configured deployment operator, independently of
 company roles; ordinary clients use the narrow export-policy endpoint.
 

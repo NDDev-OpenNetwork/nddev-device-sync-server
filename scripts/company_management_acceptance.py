@@ -171,11 +171,12 @@ def check_company_management(*, signed, request, sql, challenge, verify, enroll,
     _, restored = change(authority, bootstrap["user_id"], bootstrap_row["revision"]+1, "admin")
     assert restored[0] == 200
 
-    # Create an actual own-device HTTP screen intent with independent endpoint
-    # proofs. Ready remains an opaque server artifact, not native pixels.
+    # Actual independent device/endpoint proofs across company users. Ready
+    # remains an opaque server artifact; these checks do not establish native pixels.
     def openssl(*args):
         return subprocess.run(["openssl", *map(str,args)], check=True, capture_output=True, timeout=5).stdout
-    def endpoint(peer):
+    def endpoint(actor):
+        peer = actor[0]
         key = directory / (uuid.uuid4().hex + ".pem")
         openssl("genpkey", "-algorithm", "ED25519", "-out", key); key.chmod(0o600)
         sensitive.extend(key.read_text().splitlines()[1:-1])
@@ -188,13 +189,93 @@ def check_company_management(*, signed, request, sql, challenge, verify, enroll,
         transcript += public + instance.bytes + (0).to_bytes(8,"big") + len(nonce).to_bytes(2,"big") + nonce.encode() + expires.to_bytes(8,"big")
         path = directory / (uuid.uuid4().hex + ".bin"); path.write_bytes(transcript)
         signature = openssl("pkeyutl", "-sign", "-inkey", key, "-rawin", "-in", path); path.unlink()
-        status, binding = signed(peer, member[1], "/v2/rds/bindings", {"endpoint_public_key":encode(public),"instance_id":str(instance),"base_revision":0,"nonce":nonce,"expires_at_ms":expires,"signature":encode(signature)}, nonce=nonce, expiry=expires)
+        status, binding = call(actor, "/v2/rds/bindings", {"endpoint_public_key":encode(public),"instance_id":str(instance),"base_revision":0,"nonce":nonce,"expires_at_ms":expires,"signature":encode(signature)}, nonce=nonce, expiry=expires)
         assert status == 200
         return binding
-    host = enroll(member[1]); viewer_binding, host_binding = endpoint(member[0]), endpoint(host)
-    status, view = call(member, "/v2/rds/views", {"target_device_id":host[1],"viewer_revision":viewer_binding["revision"],"host_revision":host_binding["revision"],"display":0,"max_fps":30,"output_height":1080,"expires_at_ms":(int(time.time())+120)*1000,"idempotency_key":uuid.uuid4().hex})
-    assert status == 201
-    assert signed(host, member[1], "/v2/rds/views/" + view["view_id"] + "/ready", {"native_grant":"AA"})[0] == 200
+    host = (enroll(member[1]), member[1], member[2])
+    bindings = {actor[0][1]: endpoint(actor) for actor in (member, host, authority, demoted, foreign)}
+    def view_request(viewer, target, seconds=120):
+        return {"target_device_id":target[0][1],"viewer_revision":bindings[viewer[0][1]]["revision"],
+                "host_revision":bindings[target[0][1]]["revision"],"display":0,"max_fps":30,
+                "output_height":1080,"expires_at_ms":(int(time.time())+seconds)*1000,"idempotency_key":uuid.uuid4().hex}
+    def create_view(viewer, target):
+        payload = view_request(viewer, target)
+        status, view = call(viewer, "/v2/rds/views", payload)
+        assert status == 201
+        return payload, view
+    def end(viewer, view):
+        assert call(viewer, "/v2/rds/views/"+view["view_id"]+"/end", b"") == (204,None)
+    def ready(view):
+        assert call(host, "/v2/rds/views/"+view["view_id"]+"/ready", {"native_grant":"AA"})[0] == 200
+
+    # No broadening of personal inventory or device proof from administrator status.
+    assert request("/v2/devices", token=authority[1])[1]["devices"][0]["device_id"] == authority[0][1]
+    assert host[0][1] not in [d["device_id"] for d in request("/v2/devices",token=authority[1])[1]["devices"]]
+    assert signed(member[0],authority[1],"/v2/vault/key",{"existing_key":None})[0] == 401
+    for viewer,target in ((member,authority),(member,demoted),(authority,foreign),(foreign,member)):
+        assert call(viewer,"/v2/rds/bindings/"+target[0][1])[0] == 403
+        assert call(viewer,"/v2/rds/views",view_request(viewer,target))[0] == 403
+    assert call(authority,"/v2/rds/bindings/"+host[0][1])[1]["binding"] == bindings[host[0][1]]
+    _, own = create_view(member,host)
+    ready(own)
+    end(host,own)
+
+    # Two genuinely different administrators compete for the same immutable host.
+    promoted = member_row(authority,demoted[2])
+    assert change(authority,demoted[2],promoted["revision"],"admin")[1][0] == 200
+    viewers = [authority,demoted]
+    requests = [view_request(viewer,host) for viewer in viewers]
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda i: call(viewers[i],"/v2/rds/views",requests[i]),range(2)))
+    assert sorted(status for status,_ in outcomes) == [201,503]
+    winner_index = next(i for i,result in enumerate(outcomes) if result[0] == 201)
+    winner, outsider = viewers[winner_index],viewers[1-winner_index]
+    view = outcomes[winner_index][1]
+    assert call(host,"/v2/rds/views/incoming")[1]["view"] == view
+    ready(view)
+    path = "/v2/rds/views/"+view["view_id"]
+    assert call(winner,path)[1]["native_grant"] == "AA"
+    assert call(winner,"/v2/rds/views",requests[winner_index])[1]["state"] == "ready"
+    assert call(outsider,path)[0] == 403
+    assert call(outsider,path+"/end",b"")[0] == 403
+    assert call(winner,path+"/ready",{"native_grant":"AA"})[0] == 403
+    assert call(host,path)[0] == 403
+    restart()
+    assert call(host,"/v2/rds/views/incoming")[1]["view"]["state"] == "ready"
+    assert call(winner,path)[1]["native_grant"] == "AA"
+
+    current = member_row(outsider,winner[2])
+    assert change(outsider,winner[2],current["revision"],"user")[1][0] == 200
+    assert call(host,"/v2/rds/views/incoming") == (200,{"view":None})
+    assert call(winner,path)[0] == 403
+    assert call(host,path+"/ready",{"native_grant":"AA"})[0] == 403
+    assert call(winner,"/v2/rds/views",requests[winner_index])[0] == 403
+    assert call(winner,"/v2/rds/bindings/"+host[0][1])[0] == 403
+    assert request("/v2/session",token=winner[1])[0] == 200
+    end(host,view) # Cleanup remains allowed for the actual host after viewer demotion.
+    current = member_row(outsider,winner[2])
+    assert change(outsider,winner[2],current["revision"],"admin")[1][0] == 200
+    assert call(winner,"/v2/rds/views",requests[winner_index])[1]["state"] == "ended"
+    assert sql(f"SELECT user_id FROM nds_devices WHERE device_id={literal(host[0][1])}").stdout.strip() == member[2]
+
+    # Original viewer session revocation is still enforced when the host belongs
+    # to another user. Both sessions come through real recipient SMTP/OTP.
+    viewer_email = member_row(authority,authority[2])["email"]
+    # Respect the real recipient resend window; never clear rate state or age OTPs.
+    resend_ready = time.monotonic() + 61
+    while time.monotonic() < resend_ready:
+        time.sleep(min(1,resend_ready-time.monotonic()))
+    session = verify(challenge(viewer_email),authority[2],company)
+    renewed = (authority[0],session,authority[2])
+    _, old_session_view = create_view(renewed,host)
+    assert request("/v2/session",token=session,method="DELETE")[0] == 204
+    assert call(host,"/v2/rds/views/"+old_session_view["view_id"]+"/ready",{"native_grant":"AA"})[0] == 403
+    end(host,old_session_view)
+
+    # Membership removal retires a cross-user view and keeps personal Vault rows.
+    _, view = create_view(authority,host)
+    ready(view)
+    print("Company RDS authority passed: separate users, signed binding policy, own-device access, cross-user admin access, cross-company/user denial, participant-only artifacts, shared host admission, restart, demotion/repromotion and original-viewer-session revocation.", flush=True)
     revision = member_row(authority, member[2])["revision"]
     payload, removed = change(authority, member[2], revision)
     assert removed[0] == 200 and removed[1]["active"] is False
