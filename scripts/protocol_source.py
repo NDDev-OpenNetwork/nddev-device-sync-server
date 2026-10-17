@@ -6,7 +6,7 @@ import subprocess
 import urllib.request
 
 ROOT = Path(__file__).resolve().parent.parent
-REPOSITORY = "NDDev-OpenNetwork/nddev-device-sync-protocol"
+REPOSITORY = "NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-protocol"
 matches = re.findall(r"^protocol_commit: ([a-f0-9]{40})$", (ROOT / "module.yaml").read_text(), re.MULTILINE)
 assert len(matches) == 1, "module manifest must pin one full protocol commit"
 COMMIT = matches[0]

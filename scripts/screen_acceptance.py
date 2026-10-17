@@ -157,7 +157,7 @@ def check_screen(request, token, second_session, restart, directory, sql, origin
     sql("REVOKE UPDATE(native_grant) ON nds_screen_views FROM nds_runtime")
     assert send(host, ready_path, {"native_grant": artifact}, nonce=rollback_nonce, expiry=rollback_expiry)[0] == 503
     assert sql("SELECT state FROM nds_screen_views").stdout.strip() == "requested"
-    assert sql(f"SELECT count(*) FROM nds_sync_nonces WHERE device_id={literal(host['device'])} AND nonce={literal(rollback_nonce)}").stdout.strip() == "0"
+    assert sql(f"SELECT count(*) FROM nds_replica_nonces WHERE device_id={literal(host['device'])} AND nonce={literal(rollback_nonce)}").stdout.strip() == "0"
     sql("GRANT UPDATE(native_grant) ON nds_screen_views TO nds_runtime")
     assert send(host, ready_path, {"native_grant": artifact}, nonce=rollback_nonce, expiry=rollback_expiry)[0] == 200
     status, ready = send(host, ready_path, {"native_grant": artifact})
@@ -216,7 +216,7 @@ def check_screen(request, token, second_session, restart, directory, sql, origin
     assert status == 201 and after_expiry["view_id"] != expires["view_id"]
     ended(viewer, after_expiry)
     floor = int(time.time() * 1000) + 5000
-    sql(f"UPDATE nds_sync_counters SET clock_floor_ms={floor}")
+    sql(f"UPDATE nds_replica_counters SET clock_floor_ms={floor}")
     old = create_value(viewer, host, 2)
     assert send(viewer, "/v2/rds/views", old)[0] == 409
     time.sleep(5.1)
@@ -284,6 +284,6 @@ def check_screen(request, token, second_session, restart, directory, sql, origin
                       "UPDATE nds_screen_bindings SET user_id=user_id WHERE false"]:
         assert sql(statement, "nds_runtime", check=False).returncode != 0
     ids = ",".join(literal(d["device"]) for d in [viewer, host, other])
-    sql(f"DELETE FROM nds_screen_views; DELETE FROM nds_screen_bindings WHERE device_id IN({ids}); DELETE FROM nds_sync_nonces WHERE device_id IN({ids}); DELETE FROM nds_enrollment_challenges WHERE device_id IN({ids}); DELETE FROM nds_devices WHERE device_id IN({ids}); DELETE FROM nds_auth_limits;")
+    sql(f"DELETE FROM nds_screen_views; DELETE FROM nds_screen_bindings WHERE device_id IN({ids}); DELETE FROM nds_replica_nonces WHERE device_id IN({ids}); DELETE FROM nds_enrollment_challenges WHERE device_id IN({ids}); DELETE FROM nds_devices WHERE device_id IN({ids}); DELETE FROM nds_auth_limits;")
     print("Owned screen HTTP/PG acceptance: actual fresh enrollment, RFC9421/endpointPoPV2, lost-ACK/concurrent binding/create, exact opaque Ready retry, retained End/cap/expiry/clock-floor/session/device revoke, timeout and least privilege passed.")
     return secrets_for_redaction

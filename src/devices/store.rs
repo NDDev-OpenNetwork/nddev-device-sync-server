@@ -1,7 +1,7 @@
 use crate::identity::{crypto::Crypto, now_ms, store as identity_store};
 use nddev_device_sync_application::{
     devices::*,
-    identity::{Owner, ProtectedDigest, START_RATE, TenantId, UserId},
+    identity::{Owner, ProtectedDigest, TenantId, UserId},
 };
 use sqlx::{Postgres, Row, Transaction, postgres::PgRow};
 use std::future::Future;
@@ -138,7 +138,7 @@ impl DeviceStore for Store {
             let outcome = async {
                 authorize(&mut tx,&issue.authorization,now).await?;
                 identity_store::clean(&mut tx,now).await.map_err(identity_error)?;
-                identity_store::rate(&mut tx,issue.source,START_RATE,now).await.map_err(identity_error)?;
+                identity_store::rate(&mut tx,issue.owner_rate_key,ENROLLMENT_RATE,now).await.map_err(identity_error)?;
                 sqlx::query("DELETE FROM nds_enrollment_challenges WHERE expires_at_ms <= $1 OR consumed OR attempts_remaining=0").bind(millis(now)?).execute(&mut *tx).await.map_err(unavailable)?;
                 let challenge = issue.challenge;
                 let owner = &challenge.device.owner;

@@ -42,7 +42,7 @@ def check_vault(enroll, send, request, token, restart, directory, sql):
     legacy_id = uuid.uuid4()
     legacy = {'key_id': str(legacy_id), 'key_material': base64.urlsafe_b64encode(
         legacy_id.bytes + secrets.token_bytes(32)).decode()}
-    sql(f"DELETE FROM nds_vault_keys; UPDATE nds_sync_counters SET root_key_id='{legacy_id}';")
+    sql(f"DELETE FROM nds_vault_keys; UPDATE nds_replica_counters SET root_key_id='{legacy_id}';")
     status, error = send(second, second_id, route, empty)
     assert status == 409 and json.loads(error) == {'error': 'vault_key_registration_required'}
     status, registered = send(first, first_id, route, json.dumps({'existing_key': legacy}).encode())
@@ -64,6 +64,6 @@ def check_vault(enroll, send, request, token, restart, directory, sql):
     assert request('/v2/devices/' + first_id, token=token, method='DELETE')[0] == 204
     assert send(first, first_id, route, empty)[0] == 403
     assert send(second, second_id, route, empty)[0] == 200
-    sql('DELETE FROM nds_vault_keys; DELETE FROM nds_sync_nonces; DELETE FROM nds_sync_counters; DELETE FROM nds_enrollment_challenges; DELETE FROM nds_devices; DELETE FROM nds_auth_limits;')
+    sql('DELETE FROM nds_vault_keys; DELETE FROM nds_replica_nonces; DELETE FROM nds_replica_counters; DELETE FROM nds_enrollment_challenges; DELETE FROM nds_devices; DELETE FROM nds_auth_limits;')
     print('Server-managed vault acceptance passed: concurrent native delivery, encrypted storage, restart, retained-key transition, wrong wrapping key, nonce replay and revocation.')
     return [key['key_material'], legacy['key_material'], wrong['key_material'], original]

@@ -22,7 +22,7 @@ from browser_acceptance import check_browser
 MAILPIT = "axllent/mailpit:v1.31.4@sha256:b68349e3a014b90c5610bfb26b2ae36f3892d7b8cf25ee140c6c71c98d2fcf48"
 
 
-def check_identity(binary, directory, env, sql, command, validate_events, fixture_receipt=None, fixture_seconds=1200, fixture_passkeys=False, fixture_tls=False):
+def check_identity(binary, directory, env, sql, command, validate_events, fixture_receipt=None, fixture_seconds=1200, fixture_passkeys=False, fixture_tls=False, fixture_sync3=False):
     mailbox = "nds-mail-check-" + uuid.uuid4().hex[:12]
     server = None
     created = False
@@ -176,6 +176,17 @@ def check_identity(binary, directory, env, sql, command, validate_events, fixtur
             deadline = time.monotonic() + fixture_seconds
             try:
                 while time.monotonic() < deadline and not stop_marker.exists():
+                    if fixture_sync3 and state.get("new_operation_version") != 3:
+                        # Explicit fixture-operator action after the real client
+                        # creates its counter. Never change the migration default
+                        # or admit an owner with existing operations implicitly.
+                        changed = sql("WITH changed AS (UPDATE nds_replica_counters SET admission_version=3 "
+                                      "WHERE admission_version=2 AND server_seq=0 "
+                                      "AND floor_seq=0 AND base_seq=0 RETURNING 1) SELECT count(*) FROM changed").stdout.strip()
+                        assert changed in {"0", "1"}
+                        if changed == "1":
+                            state["new_operation_version"] = 3
+                            receipt.write_text(json.dumps(state))
                     # The test harness owns this exact child and its temporary
                     # dependencies. Broken connections and restarts are real I/O
                     # failures; no test bypass enters the product server.

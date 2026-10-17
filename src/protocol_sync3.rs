@@ -1,0 +1,282 @@
+// Generated; do not edit. AGPL-3.0-only. NDDev OpenNetwork — https://nddev.ai
+// Source: NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-protocol/contracts/v3/sync.schema.json
+// Schema SHA-256: 6ea1cc8588b1c3b108a3e116301221ab58d0bcdd03b904c3153c95bedb113475
+// Generator script SHA-256: 5d64ede7af40a61ff03e2757878764939c60e8ad3c9aebeebe14490c03a1501b
+// Tool: quicktype-core 26.0.0; dependency lock SHA-256: 643e0f2ba88602f4acb9546c401d4838e8e106a9180c0e6f3a760985081bfcf6
+// DTO generation is not schema, authorization or cryptographic validation.
+// Shared schema SHA-256: 3e9bf15d93a62b90732aae63a6a5f5180b21138459c5c7b43a2f455939436c12
+
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncOperationV3 {
+    pub base_revision: i64,
+
+    pub basis_seq: i64,
+
+    pub device_id: String,
+
+    pub entity_id: String,
+
+    pub entity_type: EntityType,
+
+    pub idempotency_key: String,
+
+    pub lifecycle: Lifecycle,
+
+    pub operation_id: String,
+
+    pub payload: EncryptedPayload,
+
+    pub schema_version: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EntityType {
+    #[serde(rename = "account_state")]
+    AccountState,
+
+    #[serde(rename = "clipboard_item")]
+    ClipboardItem,
+
+    #[serde(rename = "device_state")]
+    DeviceState,
+
+    #[serde(rename = "module_state")]
+    ModuleState,
+
+    #[serde(rename = "repository_state")]
+    RepositoryState,
+
+    #[serde(rename = "vault_record")]
+    VaultRecord,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lifecycle {
+    pub resolved_through_seq: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EncryptedPayload {
+    pub algorithm: Algorithm,
+
+    pub ciphertext: String,
+
+    pub key_id: String,
+
+    pub nonce: String,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Algorithm {
+    #[serde(rename = "aes-256-gcm")]
+    Aes256Gcm,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncCapabilities {
+    pub history_retention: bool,
+
+    pub new_operation_version: i64,
+
+    pub read_operation_versions: Vec<i64>,
+
+    pub schema_version: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncDeltaPage {
+    pub entries: Vec<SyncRow>,
+
+    pub floor_seq: i64,
+
+    pub has_more: bool,
+
+    pub head_seq: i64,
+
+    pub next_after_seq: i64,
+
+    pub schema_version: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncRow {
+    /// Exact original JSON request. Owning adapter enforces1..24576 decoded UTF-8 bytes and
+    /// validates its explicit generated operation version; maxLength alone counts characters.
+    pub operation_body: String,
+
+    /// Exact original JSON receipt, inherited1..2048 decoded UTF-8 bytes. Owning adapter checks
+    /// bytes, generated receipt, original status and operation/sequence. maxLength alone counts
+    /// characters.
+    pub result_body: String,
+
+    pub result_status: i64,
+
+    pub server_seq: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncBasePage {
+    pub base_seq: i64,
+
+    pub entries: Vec<SyncRow>,
+
+    pub has_more: bool,
+
+    pub next_member_seq: i64,
+
+    pub schema_version: i64,
+
+    pub total_members: i32,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncExpired {
+    pub error: SyncExpiredError,
+
+    pub floor_seq: i64,
+
+    pub head_seq: i64,
+
+    pub schema_version: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncExpiredError {
+    #[serde(rename = "basis_expired")]
+    BasisExpired,
+
+    #[serde(rename = "checkpoint_expired")]
+    CheckpointExpired,
+
+    #[serde(rename = "cursor_expired")]
+    CursorExpired,
+
+    #[serde(rename = "legacy_outcome_unknown")]
+    LegacyOutcomeUnknown,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Error {
+    pub error: ErrorError,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorError {
+    #[serde(rename = "authentication_failed")]
+    AuthenticationFailed,
+
+    #[serde(rename = "authorization_denied")]
+    AuthorizationDenied,
+
+    #[serde(rename = "challenge_expired")]
+    ChallengeExpired,
+
+    #[serde(rename = "cursor_expired")]
+    CursorExpired,
+
+    #[serde(rename = "dependency_unavailable")]
+    DependencyUnavailable,
+
+    #[serde(rename = "device_revoked")]
+    DeviceRevoked,
+
+    #[serde(rename = "idempotency_conflict")]
+    IdempotencyConflict,
+
+    #[serde(rename = "invalid_request")]
+    InvalidRequest,
+
+    #[serde(rename = "invalid_signature")]
+    InvalidSignature,
+
+    #[serde(rename = "method_unavailable")]
+    MethodUnavailable,
+
+    #[serde(rename = "operation_conflict")]
+    OperationConflict,
+
+    #[serde(rename = "rate_limited")]
+    RateLimited,
+
+    #[serde(rename = "recent_authentication_required")]
+    RecentAuthenticationRequired,
+
+    #[serde(rename = "replayed_nonce")]
+    ReplayedNonce,
+
+    #[serde(rename = "request_timeout")]
+    RequestTimeout,
+
+    #[serde(rename = "revision_exhausted")]
+    RevisionExhausted,
+
+    #[serde(rename = "server_busy")]
+    ServerBusy,
+
+    #[serde(rename = "sync_capacity_exhausted")]
+    SyncCapacityExhausted,
+
+    #[serde(rename = "vault_key_registration_required")]
+    VaultKeyRegistrationRequired,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncApplied {
+    pub operation_id: String,
+
+    pub outcome: SyncAppliedOutcome,
+
+    pub revision: i64,
+
+    pub server_seq: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncAppliedOutcome {
+    Applied,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SyncConflict {
+    pub base_revision: i64,
+
+    pub current_revision: i64,
+
+    pub operation_id: String,
+
+    pub outcome: SyncConflictOutcome,
+
+    pub resolution_state: ResolutionState,
+
+    pub server_seq: i64,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SyncConflictOutcome {
+    Conflict,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResolutionState {
+    Unresolved,
+}
