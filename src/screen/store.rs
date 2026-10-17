@@ -488,3 +488,14 @@ pub(crate) async fn retire_session(tx: &mut Tx<'_>, digest: &[u8]) -> Result<(),
     .await?;
     Ok(())
 }
+/// Membership removal affects both participants. Demotion retires only views
+/// requiring administrative cross-user permission; personal views remain valid.
+pub(crate) async fn retire_owner(
+    tx: &mut Tx<'_>,
+    owner: &nddev_device_sync_domain::identity::Owner,
+    administrative_only: bool,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE nds_screen_views v SET state='ended',native_grant=NULL WHERE state<>'ended' AND ((NOT $3 AND EXISTS(SELECT 1 FROM nds_devices d WHERE d.user_id=$1 AND d.tenant_id=$2 AND d.device_id IN(v.viewer_device,v.host_device))) OR ($3 AND EXISTS(SELECT 1 FROM nds_devices d WHERE d.device_id=v.viewer_device AND d.user_id=$1 AND d.tenant_id=$2) AND EXISTS(SELECT 1 FROM nds_devices d WHERE d.device_id=v.host_device AND (d.user_id<>$1 OR d.tenant_id<>$2))))")
+        .bind(owner.user_id.as_str()).bind(owner.tenant_id.as_str()).bind(administrative_only).execute(&mut **tx).await?;
+    Ok(())
+}

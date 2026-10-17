@@ -94,7 +94,7 @@ Release deployments must instead consume the reviewed built image by digest.
 
 The server exposes `/v1/health`, `/v1/ready`, `/source` and the implemented v2
 identity/device routes, with request IDs and `Cache-Control: no-store`. Identity is
-unavailable until configured privately. `/v1/ready` requires schema version 12;
+unavailable until configured privately. `/v1/ready` requires schema version 13;
 use the explicit migrator before starting the updated runtime. The observability
 pipeline remains a separate slice.
 
@@ -298,6 +298,12 @@ Both server and collector export opt-out apply to client feeds. Transport receip
 do not establish searchable delivery; qualify the actual OpenObserve result.
 Without the private configuration the gateway reports unavailable.
 
+`GET /v2/observability/client-policy` exposes only `export_mode` to an active,
+signed client. Global status, incidents and incident actions require the immutable
+configured bootstrap operator identity. A company administrator does not gain
+these privileges. A valid non-operator receives `403 authorization_denied` and
+retains its ordinary session; ingestion and client policy remain available.
+
 ## Passkeys and schema 8
 
 Configure `NDS_PUBLIC_ORIGIN` with the exact HTTPS origin and a DNS host, alongside
@@ -364,7 +370,7 @@ legacy outcomes and expired basis/cursor/checkpoint are explicit refusals, never
 replacement operations or success receipts. Commit telemetry is emitted only
 after the database confirms the transaction.
 
-Readiness requires schema 12. The old SQL table names no longer exist; stop old
+Readiness requires schema 13. The old SQL table names no longer exist; stop old
 server writers before deploying this schema. Build/unit and ordinary isolated
 PostgreSQL tests do not establish old-binary exclusion, lost-commit-acknowledgement
 handling or physical storage-failure qualification. Qualify those deployment
@@ -375,7 +381,7 @@ live migration or retention change.
 
 Schema 10 adds current endpoint binding rows and finite screen intent/receipt
 rows. Apply the append-only migration with the existing migrator credential;
-Current readiness requires schema12. The runtime role has only the needed
+Current readiness requires schema13. The runtime role has only the needed
 SELECT/INSERT, binding transition and view state/grant UPDATE, and expired-view
 DELETE privileges. It cannot change owner/session references, original request,
 profile/admission/expiry, delete binding CAS history or perform DDL/TRUNCATE.
@@ -413,11 +419,11 @@ The owning PostgreSQL/SMTP gate uses fresh enrollment and independent OpenSSL
 HTTP/endpoint signatures, tests races, exact artifact/receipt replay, cap, expiry,
 clock floor, session/device revocation, timeout and runtime privileges. Its opaque
 server artifact fixture is not claimed to be a valid native grant. To additionally
-exercise schema9-to12 with a preserved schema9 server binary outside this checkout,
+exercise schema9-to13 with a preserved schema9 server binary outside this checkout,
 the optional upgrade fixture requires `cryptography==50.0.2` in its Python
 environment. It uses real AES-256-GCM for seven bounded existing rows in owner,
 device, session, vault envelope, sync counter/entity/operation tables. Canonical
-original data columns and digests are checked after migration12 and its repeat; envelope
+original data columns and digests are checked after migration13 and its repeat; envelope
 and record decryption remain valid. These are isolated storage witnesses, not
 fabricated authenticated NDS sessions. The existing real HTTP/PG/SMTP checks
 run after scoped witness cleanup:
@@ -451,14 +457,64 @@ there is exactly one active account. Registration uses its authenticated session
 and rejects a selector. Neither email selection nor global method availability
 is proof of user verification. WebAuthn credential proof is still required.
 
-Administrative invitation issuance and membership-management APIs, cross-user
-RDS and client presentation remain unimplemented in this slice. The ordinary
-PostgreSQL/SMTP gate seeds pending invitation metadata only and exercises actual
-recipient OTP verification, concurrent consume, issuer loss, expiry, revocation,
-per-user session capacity, key isolation, restart and reinvitation. It does not
-claim an invitation-delivery UI or multiple-user WebAuthn browser acceptance.
+The company administration API is described below. Native/web presentation,
+invitation-fragment handling, cross-user RDS and multiple-user WebAuthn browser
+acceptance remain separate work. Source inclusion does not establish completion
+of those clients or authorize deployment.
 
 With `cryptography==50.0.2`, add `--upgrade-company` to the PostgreSQL gate to
-exercise production 11-to12 SQL in a separate disposable database. Existing
+exercise production 11-to12-to13 SQL in a separate disposable database. Existing
 encrypted witnesses remain decryptable and old OTP state is preserved. This
 supplements fresh SQLx migration/repeat checks; it does not authorize deployment.
+
+## Company administration and schema 13
+
+All company routes require a current session and enrolled-device HTTP signature.
+`GET /v2/company` returns the caller's company and membership. Active company
+administrators can page `/v2/company/members` and `/v2/company/invitations`, create
+an invitation with POST to the latter, revoke it through
+`/v2/company/invitations/{invitation_id}/revoke`, and change/remove a member through
+`POST /v2/company/members/{user_id}`. Callers cannot select another company.
+
+Mutations carry a canonical UUIDv7 `operation_id`; its timestamp fixes a
+five-minute retry window, with at most sixty seconds of future clock skew.
+Retries retain exact body bytes and target but use a fresh signature/nonce.
+Current authority is checked before replaying the original status/body; another
+request under that ID conflicts. The expired ID remains invalid after receipt
+cleanup or restart. Up to128 receipts per device are retained, each at most4KiB.
+Member changes also require the observed revision and atomically preserve the
+last active administrator. Removal revokes sessions and enrollment challenges,
+retires affected server screen metadata and retains personal keys/data. Demotion
+revokes outstanding invitations issued by that administrator and removes only
+administrative cross-user screen authority.
+
+Company pages contain at most50 items. Each company admits up to128 pending
+invitations and retains at most1024 invitation records. Invitations expire after
+seven days; cleanup keeps a five-minute grace and never removes a row still
+referenced by an OTP challenge. These are control metadata bounds, independent
+of repository synchronization limits.
+
+Creation, SMTP acceptance and membership acceptance are separate outcomes. The
+immutable creation reply describes initial pending state; GET invitations reads
+current state. Only protected token verifiers are durable. The existing finite
+SMTP queue holds one-use delivery material, so command replay never resends.
+Unavailable queue/transport configuration records `failed`; uncertain SMTP
+outcomes or an unacknowledged delivery observed after five minutes record
+`unknown`. Neither state implies recipient delivery. An administrator can revoke
+and issue a new invitation explicitly; there is no silent token replacement.
+Queued mail can arrive after revocation, but recipient authentication always
+rechecks current authority, status and expiry.
+
+Links use the configured origin and `#invite/<id>/<token>`, keeping tokens out of
+HTTP request targets. Clients must consume and clear that fragment, then perform
+the recipient OTP flow; the current presentation does not yet implement this
+handoff. Tokens, verifiers and recipient addresses never enter telemetry. Audit
+records distinguish creation, acceptance, role changes, removal and delivery;
+public command/invitation IDs correlate verified actors and targets with traces.
+
+The ordinary real PostgreSQL/SMTP gate checks signed administrative creation,
+actual mail and recipient OTP, concurrent duplicate requests, changed bytes,
+restart, cross-company/member denial, pagination, concurrent last-admin changes,
+session/screen-metadata retirement and real five-minute command expiration.
+Separate real collector/native-client qualification proves operator restriction
+and ordinary client policy without disabling authentication or telemetry.

@@ -17,9 +17,10 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+from company_management_acceptance import check_company_management
 
 
-def check_company_identity(request, sql, mailbox, http, pepper, restart, directory, origin):
+def check_company_identity(request, sql, mailbox, http, pepper, restart, directory, origin, observability_configured=False):
     sensitive = [pepper]
     encode = lambda value: base64.urlsafe_b64encode(value).decode().rstrip("=")
     literal = lambda value: "'" + value.replace("'", "''") + "'"
@@ -185,13 +186,15 @@ def check_company_identity(request, sql, mailbox, http, pepper, restart, directo
         status, device = request("/v2/devices/enrollments", {"challenge_id": receipt["challenge_id"], "signature": encode(sign(key, b"NDS-ENROLLMENT-V2\0" + base64.urlsafe_b64decode(receipt["challenge"] + "=")))}, token=token)
         assert status == 201
         return key, device["device_id"], public
-    def signed(device, token, path, body=None):
+    def signed(device, token, path, body=None, *, nonce=None, expiry=None):
         key, identifier, _ = device
         method = "GET" if body is None else "POST"
-        raw = b"" if body is None else json.dumps(body, separators=(",", ":")).encode()
+        raw = b"" if body is None else (body if isinstance(body, bytes) else json.dumps(body, separators=(",", ":")).encode())
         digest = "sha-256=:" + base64.b64encode(hashlib.sha256(raw).digest()).decode() + ":"
         now = int(time.time())
-        params = f'("@method" "@target-uri" "content-digest");created={now};expires={now+60};nonce="{encode(secrets.token_bytes(24))}";alg="ed25519";keyid="{identifier}"'
+        nonce = nonce or encode(secrets.token_bytes(24))
+        expiry = expiry or (now + 60) * 1000
+        params = f'("@method" "@target-uri" "content-digest");created={now};expires={expiry//1000};nonce="{nonce}";alg="ed25519";keyid="{identifier}"'
         signature = sign(key, f'"@method": {method}\n"@target-uri": {origin+path}\n"content-digest": {digest}\n"@signature-params": {params}'.encode())
         headers = {"Authorization": "Bearer " + token, "Signature-Input": "nds=" + params, "Signature": "nds=:" + base64.b64encode(signature).decode() + ":", "Content-Digest": digest, "Content-Type": "application/json"}
         req = urllib.request.Request(origin + path, data=raw if body is not None else None, headers=headers, method=method)
@@ -236,4 +239,11 @@ def check_company_identity(request, sql, mailbox, http, pepper, restart, directo
     assert sql(f"SELECT member_revision FROM nds_owner WHERE user_id={literal(user)}").stdout.strip() == "2"
     assert request("/v2/session", token=admin_token)[0] == 200
     print("Company identity acceptance passed: real recipient OTP, atomic invitation consume/replay, current issuer/revocation/expiry, one-company ownership, per-user session capacity, independent device proofs and Vault keys, same-company admin/cross-company personal-data denial, restart and reinvitation preserving keys while retiring all old sessions. Invitation issuance/UI and RDS cross-user access remain separate.")
-    return sensitive
+    unavailable_delivery = check_company_management(
+        signed=signed, request=request, sql=sql, challenge=challenge, verify=verify,
+        enroll=enroll, messages=messages, http=http, mailbox=mailbox, restart=restart,
+        sensitive=sensitive, admin=(peers[1], admin_token, admin_user),
+        member=(peers[0], returning_token, user), foreign=(peers[2], foreign_token, foreign_user),
+        bootstrap=bootstrap, directory=keys, origin=origin, observability_configured=observability_configured,
+    )
+    return sensitive, unavailable_delivery

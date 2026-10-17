@@ -266,11 +266,11 @@ impl IdentityStore for Store {
             let matches = equal(&digest(row.try_get("verifier").map_err(unavailable)?)?, &verifier);
             let accepted = challenge.consume(now, matches);
             sqlx::query("UPDATE nds_email_challenges SET attempts_remaining=$2,consumed=$3 WHERE challenge_id=$1").bind(id).bind(challenge.attempts_remaining as i16).bind(challenge.consumed).execute(&mut *tx).await.map_err(unavailable)?;
+            let invitation: Option<String> = row.try_get("invitation_id").map_err(unavailable)?;
             let outcome = match accepted {
                 Ok(()) => {
-                    let invitation: Option<String> = row.try_get("invitation_id").map_err(unavailable)?;
-                    let owner = if let Some(invitation) = invitation {
-                        crate::organizations::store::accept_invitation(&mut tx,&invitation,now).await
+                    let owner = if let Some(invitation) = &invitation {
+                        crate::organizations::store::accept_invitation(&mut tx,invitation,now).await
                     } else {
                         Ok(Owner {
                             user_id: UserId::new(row.try_get::<String,_>("user_id").map_err(unavailable)?).map_err(unavailable)?,
@@ -288,6 +288,9 @@ impl IdentityStore for Store {
             // the entire consumption, allowing correct reauthentication later.
             if matches!(outcome, Err(IdentityError::Capacity | IdentityError::Unavailable)) { return outcome; }
             tx.commit().await.map_err(unavailable)?;
+            if let (Some(invitation),Ok(session))=(&invitation,&outcome) {
+                tracing::info!(module="organizations",scope="database",event.name="company.invitation.accepted",outcome="ok",invitation.id=invitation.as_str(),user.id=session.owner.user_id.as_str(),tenant.id=session.owner.tenant_id.as_str());
+            }
             outcome
         }).await
     }

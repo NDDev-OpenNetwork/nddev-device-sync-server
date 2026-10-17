@@ -176,8 +176,8 @@ try:
             logs += command(str(BINARY), "migrate", env=migration_env) + "\n"
             if upgrade_witness is not None:
                 verify(sql, upgrade_witness)
-        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "12"
-        assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "12"
+        assert sql("SELECT count(*) FROM _sqlx_migrations WHERE success").stdout.strip() == "13"
+        assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "13"
         assert sql("SELECT to_regclass('public.nds_sync_operations') IS NULL").stdout.strip() == "t"
         assert sql("UPDATE public.nds_replica_counters SET admission_version=3 WHERE false", "nds_runtime", check=False).returncode != 0
         if options.upgrade_from is not None:
@@ -189,7 +189,7 @@ try:
             assert server.returncode == 0
             server = None
             clean(sql, upgrade_witness)
-            print("Schema9-to12 upgrade passed: seven canonical identity/device/vault/sync rows preserve original columns and decrypt after migration and repeat; new runtime rejects schema9 and old runtime rejects schema12 readiness; old migration history retained.")
+            print("Schema9-to13 upgrade passed: seven canonical identity/device/vault/sync rows preserve original columns and decrypt after migration and repeat; new runtime rejects schema9 and old runtime rejects schema13 readiness; old migration history retained.")
         assert sql("CREATE TABLE prohibited(id INT)", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE _sqlx_migrations SET success=false WHERE false", "nds_runtime", check=False).returncode != 0
         assert sql("UPDATE nds_sessions SET expires_at_ms=expires_at_ms WHERE false", "nds_runtime", check=False).returncode != 0

@@ -38,4 +38,8 @@ def check_company_upgrade(sql):
     assert rejected.returncode != 0 and "requires schema version 11" in rejected.stderr
     verify(sql, witness)
     assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "12"
-    print("Company migration passed: production 11-to12 SQL preserves owner/device/key/record/receipt bytes and decryption, binds existing OTP challenges, and rejects accidental direct reapplication without changing data.")
+    sql("BEGIN;\n" + (root / "0013_company_commands.sql").read_text() + "\nCOMMIT;", "nds_migrator")
+    verify(sql, witness)
+    assert sql("SELECT value FROM nddev_schema_meta WHERE key='schema_version'").stdout.strip() == "13"
+    assert sql("UPDATE nds_company_commands SET response=response WHERE false", "nds_runtime", check=False).returncode != 0
+    print("Company migration passed: production 11-to12-to13 SQL preserves owner/device/key/record/receipt bytes and decryption, binds existing OTP challenges, rejects accidental direct reapplication, and keeps command receipts immutable to runtime.")

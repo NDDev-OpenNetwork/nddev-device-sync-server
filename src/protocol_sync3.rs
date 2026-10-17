@@ -1,7 +1,7 @@
 // Generated; do not edit. AGPL-3.0-only. NDDev OpenNetwork — https://nddev.ai
 // Source: NDDev-Technocracy-OpenNetwork-NDS/nddev-device-sync-protocol/contracts/v3/sync.schema.json
 // Schema SHA-256: 6ea1cc8588b1c3b108a3e116301221ab58d0bcdd03b904c3153c95bedb113475
-// Generator script SHA-256: ac24740651edfb672992a87ca268cb532d384a83c0070aa8deb6c72b4ffbb064
+// Generator script SHA-256: dfdc9d58692d4d69f2cfa947304145efc24e0b278206efc4903ed7f9da3db4a7
 // Tool: quicktype-core 26.0.0; dependency lock SHA-256: 643e0f2ba88602f4acb9546c401d4838e8e106a9180c0e6f3a760985081bfcf6
 // DTO generation is not schema, authorization or cryptographic validation.
 // Shared schema SHA-256: 22f8a01aa3ff70b3198dcceb72f42e4de2dcc2087fa2db2a9c3864f513e051a9

@@ -13,6 +13,8 @@ use nddev_device_sync_domain::{
     sync::MAX_REVISION,
 };
 use sqlx::{Row, postgres::PgRow};
+mod control;
+pub use control::Store;
 
 fn unavailable<E>(_: E) -> IdentityError {
     IdentityError::Unavailable

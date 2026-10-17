@@ -96,7 +96,7 @@ pub(crate) fn peer(peer: Option<Extension<PeerAddress>>) -> Result<Vec<u8>, Iden
             .unwrap_or_else(|| ip.octets().to_vec())),
     }
 }
-fn locale(headers: &HeaderMap) -> Locale {
+pub(crate) fn locale(headers: &HeaderMap) -> Locale {
     for language in headers
         .get("accept-language")
         .and_then(|v| v.to_str().ok())
